@@ -562,9 +562,9 @@ export default function CapturaCentralPage() {
   const displayedHistory = isHistoryExpanded ? filteredHistory : filteredHistory.slice(0, 3);
 
   const bottomNavLinks = [
-    { href: "/workspace/grupos", label: "Grupos Éticos & CEP", icon: ShieldCheck },
-    { href: "/workspace/glossario", label: "Glossário Clínico", icon: BookOpen },
-    { href: "/workspace/modelos", label: "Modelos de Notas", icon: FileText },
+    { href: "/workspace/grupos", label: "Grupos", icon: ShieldCheck },
+    { href: "/workspace/glossario", label: "Glossário", icon: BookOpen },
+    { href: "/workspace/modelos", label: "Relatórios", icon: FileText },
   ];
 
   // Componente Reutilizável de Conteúdo da Sidebar

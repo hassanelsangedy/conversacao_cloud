@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -31,9 +31,27 @@ import {
   Printer,
   Download,
   RefreshCw,
+  Image as ImageIcon,
+  Plus,
+  LayoutGrid,
+  Maximize2,
+  AlignLeft,
+  AlignRight,
+  AlignCenter,
+  Upload,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+
+export interface ReportImage {
+  id: string;
+  url: string;
+  caption: string;
+  placement: "header" | "section" | "footer";
+  sectionKey?: string;
+  layout: "full" | "half" | "float-left" | "float-right" | "grid-2" | "grid-3";
+  createdAt: string;
+}
 
 interface SessionData {
   id: string;
@@ -93,6 +111,17 @@ export default function CuradoriaSessionPage() {
   const [originalAiFields, setOriginalAiFields] = useState<Record<string, string>>({});
   const [editedFields, setEditedFields] = useState<Set<string>>(new Set());
 
+  // Estados de Imagens do Relatório
+  const [reportImages, setReportImages] = useState<ReportImage[]>([]);
+  const [isAddImageModalOpen, setIsAddImageModalOpen] = useState(false);
+  const [targetSectionForImage, setTargetSectionForImage] = useState<string>("header");
+  const [newImageCaption, setNewImageCaption] = useState("");
+  const [newImagePlacement, setNewImagePlacement] = useState<"header" | "section" | "footer">("header");
+  const [newImageLayout, setNewImageLayout] = useState<ReportImage["layout"]>("full");
+  const [newImagePreviewUrl, setNewImagePreviewUrl] = useState<string>("");
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
   // Ações e Modais
   const [isSaving, setIsSaving] = useState(false);
   const [isRestructuring, setIsRestructuring] = useState(false);
@@ -110,11 +139,16 @@ export default function CuradoriaSessionPage() {
       setNoteFields({});
       setOriginalAiFields({});
       setEditedFields(new Set());
+      setReportImages([]);
       return;
     }
     const formatted: Record<string, string> = {};
+    let parsedImages: ReportImage[] = [];
+
     Object.entries(noteJson).forEach(([key, val]) => {
-      if (typeof val === "string") {
+      if (key === "_images" && Array.isArray(val)) {
+        parsedImages = val;
+      } else if (typeof val === "string") {
         formatted[key] = val;
       } else if (Array.isArray(val)) {
         formatted[key] = val.join("\n");
@@ -126,50 +160,54 @@ export default function CuradoriaSessionPage() {
     });
 
     setNoteFields(formatted);
+    setReportImages(parsedImages);
     setOriginalAiFields((prev) => (Object.keys(prev).length === 0 ? formatted : prev));
   }, []);
 
   // Dispara o pipeline de IA (Whisper + Gemini) para uma sessão
-  const triggerAiProcessing = useCallback(async (id: string) => {
-    setIsProcessingAI(true);
-    setProcessingError(null);
-    setProcessingStep("Transcrevendo com Whisper Large v3 e estruturando com Gemini...");
+  const triggerAiProcessing = useCallback(
+    async (id: string) => {
+      setIsProcessingAI(true);
+      setProcessingError(null);
+      setProcessingStep("Transcrevendo com Whisper Large v3 e estruturando com Gemini...");
 
-    try {
-      const res = await fetch("/api/transcribe-session", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sessionId: id }),
-      });
+      try {
+        const res = await fetch("/api/transcribe-session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: id }),
+        });
 
-      const data = await res.json();
+        const data = await res.json();
 
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || data.details || "Falha no processamento de IA.");
+        if (!res.ok || !data.success) {
+          throw new Error(data.error || data.details || "Falha no processamento de IA.");
+        }
+
+        setRawTranscription(data.raw_transcription || "");
+        setOriginalAiTranscription(data.raw_transcription || "");
+        initFields(data.clinical_note);
+
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                status: "concluido",
+                raw_transcription: data.raw_transcription,
+                clinical_note: data.clinical_note,
+              }
+            : prev
+        );
+
+        setIsProcessingAI(false);
+      } catch (err: any) {
+        console.error("[Curadoria] Erro ao processar IA:", err);
+        setProcessingError(err?.message || String(err));
+        setIsProcessingAI(false);
       }
-
-      setRawTranscription(data.raw_transcription || "");
-      setOriginalAiTranscription(data.raw_transcription || "");
-      initFields(data.clinical_note);
-
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              status: "concluido",
-              raw_transcription: data.raw_transcription,
-              clinical_note: data.clinical_note,
-            }
-          : prev
-      );
-
-      setIsProcessingAI(false);
-    } catch (err: any) {
-      console.error("[Curadoria] Erro ao processar IA:", err);
-      setProcessingError(err?.message || String(err));
-      setIsProcessingAI(false);
-    }
-  }, [initFields]);
+    },
+    [initFields]
+  );
 
   // 1. Carrega dados da sessão do Supabase
   useEffect(() => {
@@ -339,11 +377,114 @@ export default function CuradoriaSessionPage() {
     }
   };
 
-  // 2. Salvar Rascunho
+  // -------------------------------------------------------------
+  // GESTÃO DE IMAGENS DO RELATÓRIO
+  // -------------------------------------------------------------
+  const handleOpenAddImageModal = (
+    placement: "header" | "section" | "footer",
+    sectionKey?: string
+  ) => {
+    setNewImagePlacement(placement);
+    setTargetSectionForImage(sectionKey || (placement === "header" ? "header" : "footer"));
+    setNewImageCaption(
+      placement === "header"
+        ? "Logotipo Institucional"
+        : sectionKey
+        ? `Exame / Registro de ${sectionKey}`
+        : "Anexo Clínico"
+    );
+    setNewImageLayout(placement === "header" ? "full" : "half");
+    setNewImagePreviewUrl("");
+    setIsAddImageModalOpen(true);
+  };
+
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Preview imediato em Base64
+    const reader = new FileReader();
+    reader.onload = () => {
+      setNewImagePreviewUrl(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+
+    // Upload seguro para Supabase Storage bucket 'report-images'
+    setIsUploadingImage(true);
+    try {
+      const fileExt = file.name.split(".").pop() || "png";
+      const fileName = `${sessionId}-${Date.now()}.${fileExt}`;
+
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from("report-images")
+        .upload(fileName, file, {
+          cacheControl: "3600",
+          upsert: true,
+        });
+
+      if (!uploadError && uploadData) {
+        const { data: publicUrlData } = supabase.storage
+          .from("report-images")
+          .getPublicUrl(fileName);
+
+        if (publicUrlData?.publicUrl) {
+          setNewImagePreviewUrl(publicUrlData.publicUrl);
+        }
+      }
+    } catch (err) {
+      console.warn("[Storage] Upload fallback para base64:", err);
+    } finally {
+      setIsUploadingImage(false);
+    }
+  };
+
+  const handleSaveNewImage = () => {
+    if (!newImagePreviewUrl) {
+      alert("Por favor, selecione uma imagem para adicionar.");
+      return;
+    }
+
+    const newImage: ReportImage = {
+      id: crypto.randomUUID(),
+      url: newImagePreviewUrl,
+      caption: newImageCaption,
+      placement: newImagePlacement,
+      sectionKey: newImagePlacement === "section" ? targetSectionForImage : undefined,
+      layout: newImageLayout,
+      createdAt: new Date().toISOString(),
+    };
+
+    setReportImages((prev) => [...prev, newImage]);
+    setIsAddImageModalOpen(false);
+    setNewImagePreviewUrl("");
+
+    setFeedbackToast({
+      type: "success",
+      title: "Imagem Adicionada!",
+      message: `A imagem foi inserida no formato "${newImageLayout}".`,
+    });
+  };
+
+  const handleRemoveImage = (imageId: string) => {
+    setReportImages((prev) => prev.filter((img) => img.id !== imageId));
+    setFeedbackToast({
+      type: "info",
+      title: "Imagem Removida",
+      message: "A imagem foi removida do relatório.",
+    });
+  };
+
+  const handleChangeImageLayout = (imageId: string, layout: ReportImage["layout"]) => {
+    setReportImages((prev) =>
+      prev.map((img) => (img.id === imageId ? { ...img, layout } : img))
+    );
+  };
+
+  // 2. Salvar Rascunho (com imagens)
   const handleSaveDraft = async () => {
     setIsSaving(true);
     try {
-      const updatedNote = { ...noteFields };
+      const updatedNote = { ...noteFields, _images: reportImages };
       const { error } = await supabase
         .from("sessions")
         .update({
@@ -369,7 +510,7 @@ export default function CuradoriaSessionPage() {
       setFeedbackToast({
         type: "success",
         title: "Rascunho Salvo!",
-        message: "As edições foram salvas com sucesso no banco de dados.",
+        message: "As edições e imagens foram salvas com sucesso no banco de dados.",
       });
     } catch (err: any) {
       setFeedbackToast({
@@ -382,11 +523,11 @@ export default function CuradoriaSessionPage() {
     }
   };
 
-  // 3. Finalizar Validação e Homologar (com Purga LGPD)
+  // 3. Finalizar Validação e Homologar (com Purga LGPD e Imagens)
   const handleHomologate = async () => {
     setIsHomologating(true);
     try {
-      const updatedNote = { ...noteFields };
+      const updatedNote = { ...noteFields, _images: reportImages };
 
       if (session?.audio_storage_path) {
         await supabase.storage.from("audio-sessions").remove([session.audio_storage_path]);
@@ -451,6 +592,13 @@ export default function CuradoriaSessionPage() {
       fullText += `--- ${key.toUpperCase()} ---\n${val}\n\n`;
     });
 
+    if (reportImages.length > 0) {
+      fullText += `--- IMAGENS E EXAMES ANEXADOS (${reportImages.length}) ---\n`;
+      reportImages.forEach((img, idx) => {
+        fullText += `[${idx + 1}] ${img.caption} (${img.placement}): ${img.url}\n`;
+      });
+    }
+
     navigator.clipboard.writeText(fullText);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2500);
@@ -501,6 +649,102 @@ export default function CuradoriaSessionPage() {
     const mins = Math.floor(totalSeconds / 60);
     const secs = totalSeconds % 60;
     return `${mins}m ${secs}s`;
+  };
+
+  // Helper para renderizar uma imagem conforme seu layout
+  const renderImageComponent = (img: ReportImage) => {
+    const getLayoutClasses = (layout: ReportImage["layout"]) => {
+      switch (layout) {
+        case "full":
+          return "w-full max-h-80 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        case "half":
+          return "w-full max-w-sm mx-auto max-h-64 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        case "float-left":
+          return "float-left mr-3 mb-2 max-w-[180px] sm:max-w-[220px] max-h-48 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        case "float-right":
+          return "float-right ml-3 mb-2 max-w-[180px] sm:max-w-[220px] max-h-48 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        case "grid-2":
+          return "w-full max-h-56 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        case "grid-3":
+          return "w-full max-h-44 object-contain rounded-xl bg-slate-50 border border-slate-200";
+        default:
+          return "w-full max-h-72 object-contain rounded-xl bg-slate-50 border border-slate-200";
+      }
+    };
+
+    return (
+      <div key={img.id} className="relative group my-2 transition-all">
+        <div className="relative overflow-hidden rounded-xl">
+          <img
+            src={img.url}
+            alt={img.caption || "Imagem do Relatório"}
+            className={getLayoutClasses(img.layout)}
+          />
+
+          {/* Barra de Ferramentas de Edição de Layout da Imagem */}
+          <div className="absolute top-2 right-2 flex items-center gap-1 bg-white/90 backdrop-blur-md p-1 rounded-lg border border-slate-200 shadow-md opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
+            <button
+              type="button"
+              onClick={() => handleChangeImageLayout(img.id, "full")}
+              title="Largura Total (100%)"
+              className={cn(
+                "p-1 rounded hover:bg-slate-100 cursor-pointer text-slate-600",
+                img.layout === "full" && "text-[#006A55] bg-emerald-50"
+              )}
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleChangeImageLayout(img.id, "half")}
+              title="Médio Centralizado (50%)"
+              className={cn(
+                "p-1 rounded hover:bg-slate-100 cursor-pointer text-slate-600",
+                img.layout === "half" && "text-[#006A55] bg-emerald-50"
+              )}
+            >
+              <AlignCenter className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleChangeImageLayout(img.id, "float-left")}
+              title="Alinhar à Esquerda"
+              className={cn(
+                "p-1 rounded hover:bg-slate-100 cursor-pointer text-slate-600",
+                img.layout === "float-left" && "text-[#006A55] bg-emerald-50"
+              )}
+            >
+              <AlignLeft className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleChangeImageLayout(img.id, "float-right")}
+              title="Alinhar à Direita"
+              className={cn(
+                "p-1 rounded hover:bg-slate-100 cursor-pointer text-slate-600",
+                img.layout === "float-right" && "text-[#006A55] bg-emerald-50"
+              )}
+            >
+              <AlignRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => handleRemoveImage(img.id)}
+              title="Remover Imagem"
+              className="p-1 rounded hover:bg-rose-50 text-rose-600 cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+
+        {img.caption && (
+          <p className="text-[11px] text-slate-500 text-center mt-1 italic print:text-black">
+            {img.caption}
+          </p>
+        )}
+      </div>
+    );
   };
 
   if (loading) {
@@ -593,6 +837,9 @@ export default function CuradoriaSessionPage() {
     );
   }
 
+  const headerImages = reportImages.filter((img) => img.placement === "header");
+  const footerImages = reportImages.filter((img) => img.placement === "footer");
+
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-slate-800 font-sans antialiased flex flex-col selection:bg-[#006A55] selection:text-white print:bg-white print:text-black">
       {/* Toast Feedback */}
@@ -609,9 +856,9 @@ export default function CuradoriaSessionPage() {
             )}
           >
             {feedbackToast.type === "success" ? (
-              <CheckCircle2 className="w-5 h-5 text-[#006A55] shrink-0 mt-0.5" />
+              <CheckCircle2 className="w-5 h-5 text-[#006A55]" />
             ) : (
-              <AlertCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <AlertCircle className="w-5 h-5 text-rose-600" />
             )}
             <div className="flex-1">
               <h4 className="text-xs font-bold">{feedbackToast.title}</h4>
@@ -696,7 +943,7 @@ export default function CuradoriaSessionPage() {
                 className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-slate-500" />
-                Imprimir
+                Imprimir / PDF
               </button>
 
               <div
@@ -709,6 +956,14 @@ export default function CuradoriaSessionPage() {
             </>
           ) : (
             <>
+              <button
+                onClick={() => handleOpenAddImageModal("header")}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer"
+              >
+                <ImageIcon className="w-3.5 h-3.5 text-[#006A55]" />
+                <span className="hidden md:inline">+ Imagem / Logo</span>
+              </button>
+
               <button
                 onClick={handleSaveDraft}
                 disabled={isSaving}
@@ -868,7 +1123,7 @@ export default function CuradoriaSessionPage() {
         </section>
 
         {/* ========================================================= */}
-        {/* COLUNA DIREITA: "RELATÓRIO ESTRUTURADO" (CAMPOS EDITÁVEIS)*/}
+        {/* COLUNA DIREITA: "RELATÓRIO ESTRUTURADO" (COM IMAGENS)     */}
         {/* ========================================================= */}
         <section className="bg-white/85 backdrop-blur-md border border-slate-200/90 rounded-3xl p-4 sm:p-6 shadow-xs flex flex-col space-y-4 print:border-none print:shadow-none print:p-0">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3 print:hidden flex-wrap gap-2">
@@ -884,33 +1139,71 @@ export default function CuradoriaSessionPage() {
                   Relatório Estruturado (SOAP)
                 </h2>
                 <p className="text-[11px] text-slate-500">
-                  Gerado por IA &bull; Rastreamento auditável de alterações
+                  Documento Clínico &bull; Suporte a Imagens e Layouts
                 </p>
               </div>
             </div>
 
-            {editedFields.size > 0 && (
-              <div
-                style={{ color: "#D32F2F", backgroundColor: "rgba(211, 47, 47, 0.08)" }}
-                className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#D32F2F]/30 flex items-center gap-1.5 shadow-2xs"
-              >
-                <Edit3 className="w-3 h-3 text-[#D32F2F]" />
-                {editedFields.size} campo(s) alterado(s)
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              {reportImages.length > 0 && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1">
+                  <ImageIcon className="w-3 h-3 text-[#006A55]" />
+                  {reportImages.length} imagem(ns)
+                </span>
+              )}
+
+              {editedFields.size > 0 && (
+                <div
+                  style={{ color: "#D32F2F", backgroundColor: "rgba(211, 47, 47, 0.08)" }}
+                  className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#D32F2F]/30 flex items-center gap-1.5 shadow-2xs"
+                >
+                  <Edit3 className="w-3 h-3 text-[#D32F2F]" />
+                  {editedFields.size} campo(s) alterado(s)
+                </div>
+              )}
+            </div>
           </div>
 
-          {/* Cabeçalho exclusivo para Impressão / PDF */}
-          <div className="hidden print:block mb-6 border-b pb-4">
-            <h1 className="text-lg font-bold text-slate-900">Relatório Clínico Estruturado (SOAP)</h1>
-            <p className="text-xs text-slate-600 mt-1">
-              Participante: <strong>{session.participants ? `${session.participants.first_name} ${session.participants.last_name}` : "Geral"}</strong> &bull; 
-              ID: {session.participants?.auto_id || "N/A"} &bull; 
-              Data: {new Date(session.created_at).toLocaleDateString("pt-BR")}
+          {/* Cabeçalho do Relatório com Imagem / Timbre Institucional */}
+          <div className="border-b pb-4 mb-2">
+            {/* Se houver imagem de cabeçalho */}
+            {headerImages.length > 0 ? (
+              <div className="mb-4">
+                {headerImages.map((img) => renderImageComponent(img))}
+              </div>
+            ) : (
+              session.status !== "validado" && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddImageModal("header")}
+                  className="w-full py-2.5 mb-3 border-2 border-dashed border-slate-200 hover:border-[#006A55] rounded-2xl text-slate-500 hover:text-[#006A55] text-xs font-semibold flex items-center justify-center gap-2 transition-all print:hidden cursor-pointer"
+                >
+                  <ImageIcon className="w-4 h-4 text-[#006A55]" />
+                  <span>+ Inserir Logotipo / Timbre Institucional no Cabeçalho</span>
+                </button>
+              )
+            )}
+
+            <h1 className="text-base sm:text-lg font-bold text-slate-900">
+              Relatório Clínico Estruturado (SOAP)
+            </h1>
+            <p className="text-xs text-slate-600 mt-1 flex flex-wrap items-center gap-2">
+              <span>
+                Participante:{" "}
+                <strong>
+                  {session.participants
+                    ? `${session.participants.first_name} ${session.participants.last_name}`
+                    : "Geral"}
+                </strong>
+              </span>
+              <span>&bull;</span>
+              <span>ID: {session.participants?.auto_id || "N/A"}</span>
+              <span>&bull;</span>
+              <span>Data: {new Date(session.created_at).toLocaleDateString("pt-BR")}</span>
             </p>
           </div>
 
-          {/* Lista de Campos da Nota Clínica com Rastreamento Visual */}
+          {/* Lista de Campos da Nota Clínica com Imagens nas Seções */}
           <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1 print:overflow-visible print:space-y-4 max-h-[600px]">
             {sortedFields.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-xs">
@@ -919,6 +1212,9 @@ export default function CuradoriaSessionPage() {
             ) : (
               sortedFields.map(([sectionKey, sectionValue]) => {
                 const isEdited = editedFields.has(sectionKey);
+                const sectionImages = reportImages.filter(
+                  (img) => img.placement === "section" && img.sectionKey === sectionKey
+                );
 
                 return (
                   <div
@@ -936,10 +1232,25 @@ export default function CuradoriaSessionPage() {
                       </label>
 
                       <div className="flex items-center gap-2">
+                        {session.status !== "validado" && (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAddImageModal("section", sectionKey)}
+                            title={`Adicionar exame ou imagem a "${sectionKey}"`}
+                            className="text-[10px] font-semibold text-slate-500 hover:text-[#006A55] flex items-center gap-1 px-2 py-0.5 rounded-md hover:bg-slate-100 transition-colors cursor-pointer print:hidden"
+                          >
+                            <ImageIcon className="w-3 h-3 text-[#006A55]" />
+                            + Imagem
+                          </button>
+                        )}
+
                         {isEdited && (
                           <>
                             <span
-                              style={{ color: "#D32F2F", backgroundColor: "rgba(211, 47, 47, 0.08)" }}
+                              style={{
+                                color: "#D32F2F",
+                                backgroundColor: "rgba(211, 47, 47, 0.08)",
+                              }}
                               className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-[#D32F2F]/20 flex items-center gap-1"
                             >
                               <Edit3 className="w-2.5 h-2.5" />
@@ -962,6 +1273,13 @@ export default function CuradoriaSessionPage() {
                       </div>
                     </div>
 
+                    {/* Imagens anexadas a esta seção específica */}
+                    {sectionImages.length > 0 && (
+                      <div className="mb-3 space-y-2">
+                        {sectionImages.map((img) => renderImageComponent(img))}
+                      </div>
+                    )}
+
                     <textarea
                       rows={Math.max(3, sectionValue.split("\n").length + 1)}
                       value={sectionValue}
@@ -974,9 +1292,221 @@ export default function CuradoriaSessionPage() {
                 );
               })
             )}
+
+            {/* Imagens de Rodapé / Anexos Gerais */}
+            {footerImages.length > 0 && (
+              <div className="p-3.5 rounded-2xl border border-slate-200 bg-white space-y-2">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                  Anexos Documentais & Assinaturas
+                </h3>
+                {footerImages.map((img) => renderImageComponent(img))}
+              </div>
+            )}
           </div>
         </section>
       </main>
+
+      {/* ========================================================= */}
+      {/* MODAL DE ADIÇÃO DE IMAGEM / EXAME AO RELATÓRIO            */}
+      {/* ========================================================= */}
+      {isAddImageModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 print:hidden">
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
+            <button
+              onClick={() => setIsAddImageModalOpen(false)}
+              className="absolute right-5 top-5 text-slate-400 hover:text-slate-700 p-1.5 rounded-xl hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="flex items-center gap-3 mb-4">
+              <div
+                style={{ backgroundColor: "rgba(0, 106, 85, 0.1)", color: "#006A55" }}
+                className="w-10 h-10 rounded-2xl flex items-center justify-center font-bold shrink-0"
+              >
+                <ImageIcon className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-slate-900">Inserir Imagem no Relatório</h3>
+                <p className="text-xs text-slate-500">
+                  Adicione fotos clínicas, laudos, audiogramas ou timbres institucionais.
+                </p>
+              </div>
+            </div>
+
+            {/* Upload e Preview da Imagem */}
+            <div className="mb-4">
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                onChange={handleImageFileChange}
+                className="hidden"
+              />
+
+              {newImagePreviewUrl ? (
+                <div className="relative group border border-slate-200 rounded-2xl overflow-hidden bg-slate-50 p-2 text-center">
+                  <img
+                    src={newImagePreviewUrl}
+                    alt="Preview"
+                    className="max-h-56 mx-auto object-contain rounded-xl"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="mt-2 text-xs font-semibold text-[#006A55] hover:underline flex items-center justify-center gap-1 mx-auto"
+                  >
+                    <Upload className="w-3.5 h-3.5" /> Trocar Imagem
+                  </button>
+                </div>
+              ) : (
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-300 hover:border-[#006A55] rounded-2xl p-6 text-center cursor-pointer bg-slate-50 hover:bg-emerald-50/40 transition-colors"
+                >
+                  <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-800">Clique para selecionar uma imagem</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">PNG, JPG, WebP ou GIF até 10MB</p>
+                </div>
+              )}
+            </div>
+
+            {/* Configurações de Posição e Layout */}
+            <div className="space-y-3 mb-5 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Posição no Relatório</label>
+                <select
+                  value={newImagePlacement}
+                  onChange={(e) => setNewImagePlacement(e.target.value as any)}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:outline-none focus:border-[#006A55]"
+                >
+                  <option value="header">Cabeçalho (Logotipo / Timbre Institucional Superior)</option>
+                  <option value="section">Dentro de uma Seção Clínica Específica</option>
+                  <option value="footer">Rodapé / Anexos Gerais</option>
+                </select>
+              </div>
+
+              {newImagePlacement === "section" && (
+                <div>
+                  <label className="block font-bold text-slate-700 mb-1">Seção Destino</label>
+                  <select
+                    value={targetSectionForImage}
+                    onChange={(e) => setTargetSectionForImage(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs text-slate-800 focus:outline-none focus:border-[#006A55]"
+                  >
+                    {sortedFields.map(([k]) => (
+                      <option key={k} value={k}>
+                        {k}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {/* Seletor Visual de Formato e Espaço da Imagem */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1.5">
+                  Espaço e Formato na Página
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewImageLayout("full")}
+                    className={cn(
+                      "p-2 rounded-xl border text-left transition-all cursor-pointer",
+                      newImageLayout === "full"
+                        ? "bg-emerald-50 border-[#006A55] text-[#006A55] font-bold"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    <Maximize2 className="w-4 h-4 mb-1" />
+                    <div className="text-[11px] leading-tight">Largura Total</div>
+                    <div className="text-[9px] text-slate-400 font-normal">100% da página</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewImageLayout("half")}
+                    className={cn(
+                      "p-2 rounded-xl border text-left transition-all cursor-pointer",
+                      newImageLayout === "half"
+                        ? "bg-emerald-50 border-[#006A55] text-[#006A55] font-bold"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    <AlignCenter className="w-4 h-4 mb-1" />
+                    <div className="text-[11px] leading-tight">Médio</div>
+                    <div className="text-[9px] text-slate-400 font-normal">50% centralizado</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewImageLayout("float-left")}
+                    className={cn(
+                      "p-2 rounded-xl border text-left transition-all cursor-pointer",
+                      newImageLayout === "float-left"
+                        ? "bg-emerald-50 border-[#006A55] text-[#006A55] font-bold"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    <AlignLeft className="w-4 h-4 mb-1" />
+                    <div className="text-[11px] leading-tight">Esquerda</div>
+                    <div className="text-[9px] text-slate-400 font-normal">Lateral com texto</div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNewImageLayout("float-right")}
+                    className={cn(
+                      "p-2 rounded-xl border text-left transition-all cursor-pointer",
+                      newImageLayout === "float-right"
+                        ? "bg-emerald-50 border-[#006A55] text-[#006A55] font-bold"
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    )}
+                  >
+                    <AlignRight className="w-4 h-4 mb-1" />
+                    <div className="text-[11px] leading-tight">Direita</div>
+                    <div className="text-[9px] text-slate-400 font-normal">Lateral com texto</div>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">
+                  Legenda / Descrição da Imagem (Opcional)
+                </label>
+                <input
+                  type="text"
+                  value={newImageCaption}
+                  onChange={(e) => setNewImageCaption(e.target.value)}
+                  placeholder="Ex: Fig 1: Audiograma tonal liminar pós-terapia"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-900 focus:outline-none focus:border-[#006A55]"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsAddImageModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveNewImage}
+                disabled={!newImagePreviewUrl || isUploadingImage}
+                style={{ backgroundColor: "#006A55" }}
+                className="px-5 py-2.5 text-xs font-bold text-white rounded-xl hover:opacity-90 active:scale-98 transition-all disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Check className="w-4 h-4" />
+                Inserir no Relatório
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================= */}
       {/* MODAL DE CONFIRMAÇÃO DE HOMOLOGAÇÃO & PURGA LGPD         */}
@@ -1032,6 +1562,10 @@ export default function CuradoriaSessionPage() {
                 <span className="font-bold text-[#D32F2F]">
                   {editedFields.size + (isTranscriptionEdited ? 1 : 0)}
                 </span>
+              </div>
+              <div className="flex items-center justify-between text-slate-600">
+                <span>Imagens anexadas:</span>
+                <span className="font-bold text-[#006A55]">{reportImages.length}</span>
               </div>
               <div className="flex items-center justify-between text-slate-600">
                 <span>Status resultante:</span>

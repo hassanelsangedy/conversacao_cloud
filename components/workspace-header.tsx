@@ -44,17 +44,17 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
     },
     {
       href: "/workspace/grupos",
-      label: "Grupos Éticos & CEP",
+      label: "Grupos",
       icon: ShieldCheck,
     },
     {
       href: "/workspace/glossario",
-      label: "Glossário Clínico",
+      label: "Glossário",
       icon: BookOpen,
     },
     {
       href: "/workspace/modelos",
-      label: "Modelos de Notas",
+      label: "Relatórios",
       icon: FileText,
     },
   ];

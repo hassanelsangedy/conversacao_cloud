@@ -77,6 +77,9 @@ export default function CuradoriaSessionPage() {
 
   const [session, setSession] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
+  const [processingStep, setProcessingStep] = useState<string>("Iniciando transcrição...");
+  const [processingError, setProcessingError] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
 
@@ -126,7 +129,49 @@ export default function CuradoriaSessionPage() {
     setOriginalAiFields((prev) => (Object.keys(prev).length === 0 ? formatted : prev));
   }, []);
 
-  // 1. Carrega dados reais da sessão do Supabase com auto-processamento
+  // Dispara o pipeline de IA (Whisper + Gemini) para uma sessão
+  const triggerAiProcessing = useCallback(async (id: string) => {
+    setIsProcessingAI(true);
+    setProcessingError(null);
+    setProcessingStep("Transcrevendo com Whisper Large v3 e estruturando com Gemini...");
+
+    try {
+      const res = await fetch("/api/transcribe-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: id }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || data.details || "Falha no processamento de IA.");
+      }
+
+      setRawTranscription(data.raw_transcription || "");
+      setOriginalAiTranscription(data.raw_transcription || "");
+      initFields(data.clinical_note);
+
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: "concluido",
+              raw_transcription: data.raw_transcription,
+              clinical_note: data.clinical_note,
+            }
+          : prev
+      );
+
+      setIsProcessingAI(false);
+    } catch (err: any) {
+      console.error("[Curadoria] Erro ao processar IA:", err);
+      setProcessingError(err?.message || String(err));
+      setIsProcessingAI(false);
+    }
+  }, [initFields]);
+
+  // 1. Carrega dados da sessão do Supabase
   useEffect(() => {
     let isMounted = true;
     let pollTimeout: NodeJS.Timeout | null = null;
@@ -138,7 +183,7 @@ export default function CuradoriaSessionPage() {
       setErrorMessage(null);
 
       try {
-        console.log("[Curadoria] Carregando sessão do Supabase:", sessionId);
+        console.log("[Curadoria] Carregando sessão:", sessionId);
         const { data, error } = await supabase
           .from("sessions")
           .select("*, participants(*), report_templates(*), research_groups(*)")
@@ -148,7 +193,6 @@ export default function CuradoriaSessionPage() {
         if (!isMounted) return;
 
         if (error) {
-          console.error("[Curadoria] Erro no Supabase:", error.message);
           setErrorMessage(`Erro no banco de dados: ${error.message}`);
           setSession(null);
           setLoading(false);
@@ -158,7 +202,7 @@ export default function CuradoriaSessionPage() {
         if (!data) {
           retryCount++;
           if (retryCount <= MAX_RETRIES) {
-            pollTimeout = setTimeout(loadSession, 2000);
+            pollTimeout = setTimeout(loadSession, 1500);
             return;
           } else {
             setErrorMessage("Sessão não encontrada.");
@@ -170,31 +214,23 @@ export default function CuradoriaSessionPage() {
 
         setSession(data);
 
-        // Inicializa Transcrição e Campos
-        const initialTranscription = data.raw_transcription || "";
-        setRawTranscription(initialTranscription);
-        setOriginalAiTranscription((prev) => prev || initialTranscription);
-        initFields(data.clinical_note);
-        setLoading(false);
-
-        // Se ainda estiver com status 'processando', dispara o endpoint para garantir a conclusão
-        if (data.status === "processando") {
-          fetch(`/api/process-session?sessionId=${data.id}`)
-            .then((r) => r.json())
-            .then((res) => {
-              if (res.success && isMounted) {
-                setRawTranscription(res.raw_transcription || "");
-                setOriginalAiTranscription(res.raw_transcription || "");
-                initFields(res.clinical_note);
-                setSession((prev) => (prev ? { ...prev, status: "concluido", raw_transcription: res.raw_transcription, clinical_note: res.clinical_note } : prev));
-              }
-            })
-            .catch(() => {});
-
-          pollTimeout = setTimeout(loadSession, 3000);
+        // Se já possui transcrição/nota, inicializa
+        if (data.raw_transcription) {
+          setRawTranscription(data.raw_transcription);
+          setOriginalAiTranscription(data.raw_transcription);
+        }
+        if (data.clinical_note) {
+          initFields(data.clinical_note);
         }
 
-        // Se o áudio estiver no Storage, gera URL assinada temporária para o player
+        setLoading(false);
+
+        // Se a sessão está com status 'processando', dispara o pipeline dedicado imediatamente
+        if (data.status === "processando" && (!data.raw_transcription || !data.clinical_note)) {
+          triggerAiProcessing(data.id);
+        }
+
+        // Se houver áudio no Storage, gera URL assinada para o player
         if (data.audio_storage_path) {
           try {
             const { data: signedData } = await supabase.storage
@@ -219,7 +255,7 @@ export default function CuradoriaSessionPage() {
       isMounted = false;
       if (pollTimeout) clearTimeout(pollTimeout);
     };
-  }, [sessionId, supabase, initFields]);
+  }, [sessionId, supabase, initFields, triggerAiProcessing]);
 
   // Edição Manual de um Campo Clínico
   const handleFieldChange = (key: string, value: string) => {
@@ -352,12 +388,10 @@ export default function CuradoriaSessionPage() {
     try {
       const updatedNote = { ...noteFields };
 
-      // a) Purga física permanente do arquivo de áudio no Supabase Storage
       if (session?.audio_storage_path) {
         await supabase.storage.from("audio-sessions").remove([session.audio_storage_path]);
       }
 
-      // b) Atualiza a sessão
       const { error: dbError } = await supabase
         .from("sessions")
         .update({
@@ -475,7 +509,7 @@ export default function CuradoriaSessionPage() {
         <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-6 sm:p-8 rounded-3xl shadow-sm text-center flex flex-col items-center gap-3 max-w-sm w-full">
           <Activity className="w-8 h-8 text-[#006A55] animate-spin" />
           <h2 className="text-sm font-bold text-slate-900">Carregando Espelho Clínico...</h2>
-          <p className="text-xs text-slate-500">Recuperando transcrição literal e nota estruturada do banco.</p>
+          <p className="text-xs text-slate-500">Recuperando dados da sessão.</p>
         </div>
       </div>
     );
@@ -501,6 +535,59 @@ export default function CuradoriaSessionPage() {
             <ArrowLeft className="w-4 h-4" />
             Voltar para a Captura
           </Link>
+        </div>
+      </div>
+    );
+  }
+
+  // TELA DE PROCESSAMENTO DE IA EM ANDAMENTO
+  if (isProcessingAI || (session.status === "processando" && !rawTranscription)) {
+    return (
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-4 text-slate-700 font-sans">
+        <div className="bg-white/90 backdrop-blur-xl border border-slate-200 p-6 sm:p-8 rounded-3xl shadow-xl text-center max-w-md w-full space-y-5 animate-in fade-in duration-200">
+          <div
+            style={{ backgroundColor: "rgba(0, 106, 85, 0.1)", color: "#006A55" }}
+            className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto"
+          >
+            <Sparkles className="w-7 h-7 animate-spin" />
+          </div>
+
+          <div>
+            <h2 className="text-base font-bold text-slate-900">Processando com Inteligência Artificial</h2>
+            <p className="text-xs text-slate-500 mt-1">{processingStep}</p>
+          </div>
+
+          {/* Etapas Visuais */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left space-y-2.5 text-xs">
+            <div className="flex items-center gap-2 text-emerald-800 font-semibold">
+              <CheckCircle2 className="w-4 h-4 text-[#006A55]" />
+              <span>Áudio seguro no Supabase Storage (LGPD)</span>
+            </div>
+            <div className="flex items-center gap-2 text-[#006A55] font-semibold animate-pulse">
+              <Activity className="w-4 h-4 animate-spin text-[#006A55]" />
+              <span>Transcrevendo áudio (Groq Whisper Large v3)</span>
+            </div>
+            <div className="flex items-center gap-2 text-slate-500">
+              <span className="w-4 h-4 rounded-full border border-slate-300 flex items-center justify-center text-[10px]">3</span>
+              <span>Estruturando relatório SOAP (Google Gemini)</span>
+            </div>
+          </div>
+
+          {processingError && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 text-left">
+              <div className="font-bold mb-1 flex items-center gap-1">
+                <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+                Falha no processamento:
+              </div>
+              <div className="text-[11px] leading-tight">{processingError}</div>
+              <button
+                onClick={() => triggerAiProcessing(session.id)}
+                className="mt-2.5 w-full py-2 bg-[#006A55] text-white text-xs font-bold rounded-xl hover:opacity-90"
+              >
+                Tentar Processar Novamente
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );

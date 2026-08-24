@@ -1,221 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
-export const maxDuration = 60; // 60s timeout
+export const maxDuration = 30;
 
 const DEFAULT_GROUP_ID = "a1111111-1111-1111-1111-111111111111";
 const DEFAULT_TEMPLATE_ID = "b1111111-1111-1111-1111-111111111111";
 const DEFAULT_PARTICIPANT_ID = "c1111111-1111-1111-1111-111111111111";
 
-interface ProcessPipelineParams {
-  sessionId: string;
-  fileBuffer: Buffer | null;
-  fileMimeType: string;
-  targetGroupId: string;
-  notes: string;
-  durationSeconds: number;
-}
-
-// Pipeline de IA (Whisper + Gemini)
-async function executeAIPipeline({
-  sessionId,
-  fileBuffer,
-  fileMimeType,
-  targetGroupId,
-  notes,
-  durationSeconds,
-}: ProcessPipelineParams) {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://owxsysdzdepwpezsnacz.supabase.co";
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "";
-
-  const supabase = createClient(supabaseUrl, supabaseKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  console.log(`[PIPELINE] Iniciando transcrição e estruturação para sessão ${sessionId}...`);
-
-  // 1. Glossário Clínico
-  let glossaryPrompt = "";
-  if (targetGroupId) {
-    const { data: glossaryTerms } = await supabase
-      .from("clinical_glossary")
-      .select("written_term, heard_term, is_correction")
-      .eq("group_id", targetGroupId);
-
-    if (glossaryTerms && glossaryTerms.length > 0) {
-      const termsList = glossaryTerms
-        .map((t) => (t.is_correction ? `${t.written_term} (${t.heard_term})` : t.written_term))
-        .join(", ");
-      glossaryPrompt = `Termos clínicos e vocabulário especializado: ${termsList}`;
-    }
-  }
-
-  // Se o buffer não veio em memória, baixa do Storage
-  let activeBuffer = fileBuffer;
-  if (!activeBuffer) {
-    const storagePath = `${sessionId}.webm`;
-    const { data: downloadedBlob, error: dlErr } = await supabase.storage
-      .from("audio-sessions")
-      .download(storagePath);
-    if (downloadedBlob) {
-      const arr = await downloadedBlob.arrayBuffer();
-      activeBuffer = Buffer.from(arr);
-    } else {
-      console.warn("[PIPELINE] Aviso download storage:", dlErr?.message);
-    }
-  }
-
-  // 2. Transcrição via Groq Whisper Large v3
-  console.log("[PIPELINE] 2. Enviando para Groq Whisper...");
-  const groqApiKey = process.env.GROQ_API_KEY;
-  let rawTranscription = "";
-
-  if (groqApiKey && activeBuffer && activeBuffer.length > 0) {
-    try {
-      const groqFormData = new FormData();
-      const audioBlob = new Blob([new Uint8Array(activeBuffer)], { type: fileMimeType || "audio/webm" });
-      groqFormData.append("file", audioBlob, "gravacao.webm");
-      groqFormData.append("model", "whisper-large-v3");
-      groqFormData.append("language", "pt");
-      if (glossaryPrompt) {
-        groqFormData.append("prompt", glossaryPrompt);
-      }
-      groqFormData.append("response_format", "json");
-      groqFormData.append("temperature", "0");
-
-      const groqRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${groqApiKey}` },
-        body: groqFormData,
-      });
-
-      if (groqRes.ok) {
-        const groqJson = await groqRes.json();
-        rawTranscription = groqJson.text || "";
-        console.log(`[PIPELINE] Transcrição concluída: "${rawTranscription}"`);
-      } else {
-        const groqErrText = await groqRes.text();
-        console.error(`[PIPELINE ERROR] Falha na API Groq (${groqRes.status}):`, groqErrText);
-      }
-    } catch (groqErr) {
-      console.error("[PIPELINE ERROR] Exceção durante Groq Whisper:", groqErr);
-    }
-  }
-
-  if (!rawTranscription || rawTranscription.trim().length === 0) {
-    rawTranscription = "[Gravação processada. Nenhuma fala ou discurso audível detectado.]";
-  }
-
-  // 3. Estruturação via Google Gemini
-  console.log("[PIPELINE] 3. Enviando transcrição para Gemini...");
-  const geminiApiKey =
-    process.env.GEMINI_API_KEY ||
-    process.env.GOOGLE_GENAI_API_KEY ||
-    process.env.VERTEX_AI_API_KEY ||
-    process.env.GOOGLE_CLOUD_API_KEY;
-
-  let clinicalNoteJson: Record<string, any> = {};
-
-  if (geminiApiKey) {
-    try {
-      const genAI = new GoogleGenerativeAI(geminiApiKey);
-      const candidateModels = [
-        "gemini-flash-latest",
-        "gemini-3.6-flash",
-        "gemini-3.7-flash",
-        "gemini-pro-latest",
-      ];
-
-      const systemPrompt = `Você é um assistente de IA médica especializado em estruturar transcrições de sessões clínicas no formato SOAP / Anamnese conforme LGPD e CEP/UFRN.
-
-DIRETRIZES:
-1. RIGOR TOTAL: Baseie-se EXCLUSIVAMENTE nas palavras da transcrição literal abaixo. Não alucine fatos, nomes ou doenças não mencionadas.
-2. ESTRUTURAÇÃO: Responda EXCLUSIVAMENTE em JSON válido com as chaves:
-   - "Queixa Principal / Motivo da Consulta"
-   - "História Clínica & Subjetivo"
-   - "Achados da Avaliação & Objetivo"
-   - "Avaliação Diagnóstica & Hipótese"
-   - "Conduta & Plano Terapêutico"
-3. ANONIMIZAÇÃO: Oculte dados sensíveis (CPF, telefones) como [DADO_ANONIMIZADO].
-
-NOTAS DO ORIENTADOR:
-${notes || "Nenhuma observação."}
-
-TRANSCRIÇÃO LITERAL:
-${rawTranscription}`;
-
-      let responseText = "";
-      let geminiErr = null;
-
-      for (const modelName of candidateModels) {
-        try {
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: {
-              responseMimeType: "application/json",
-              temperature: 0.1,
-            },
-          });
-          const result = await model.generateContent(systemPrompt);
-          responseText = result.response.text();
-          if (responseText) break;
-        } catch (mErr: any) {
-          geminiErr = mErr;
-        }
-      }
-
-      if (responseText) {
-        clinicalNoteJson = JSON.parse(responseText);
-        console.log("[PIPELINE] 4. Nota clínica gerada com sucesso pelo Gemini!");
-      } else if (geminiErr) {
-        console.error("[PIPELINE ERROR] Erro na estruturação com Gemini:", geminiErr);
-      }
-    } catch (err) {
-      console.error("[PIPELINE ERROR] Exceção geral no Gemini:", err);
-    }
-  }
-
-  if (!clinicalNoteJson || Object.keys(clinicalNoteJson).length === 0) {
-    clinicalNoteJson = {
-      "Queixa Principal / Motivo da Consulta": "Sessão clínica registrada.",
-      "História Clínica & Subjetivo": rawTranscription,
-      "Achados da Avaliação & Objetivo": "Avaliação clínica concluída.",
-      "Avaliação Diagnóstica & Hipótese": "Conforme relato do participante.",
-      "Conduta & Plano Terapêutico": "Revisão e validação pelo orientador.",
-    };
-  }
-
-  // 4. Atualiza registro final no Supabase
-  const { error: updateErr } = await supabase
-    .from("sessions")
-    .update({
-      raw_transcription: rawTranscription,
-      clinical_note: clinicalNoteJson,
-      duration_seconds: durationSeconds,
-      status: "concluido",
-      is_anonimized: true,
-    })
-    .eq("id", sessionId);
-
-  if (updateErr) {
-    console.error("[PIPELINE ERROR] Erro ao salvar sessão concluída no banco:", updateErr.message);
-  } else {
-    console.log(`[PIPELINE] Sessão ${sessionId} CONCLUÍDA com sucesso no banco de dados.`);
-  }
-
-  return {
-    rawTranscription,
-    clinicalNoteJson,
-  };
-}
-
 export async function POST(request: NextRequest) {
   try {
-    console.log("[PIPELINE] 1. Recebendo requisição no backend...");
+    console.log("[PIPELINE] 1. Recebendo áudio e metadados no backend...");
 
     const contentType = request.headers.get("content-type") || "";
 
@@ -257,7 +51,7 @@ export async function POST(request: NextRequest) {
       advisorNotes = body.advisorNotes || "";
     }
 
-    // Inicializa cliente Supabase Server
+    // 2. Inicializa cliente Supabase
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://owxsysdzdepwpezsnacz.supabase.co";
     const supabaseKey =
       process.env.SUPABASE_SERVICE_ROLE_KEY ||
@@ -275,14 +69,13 @@ export async function POST(request: NextRequest) {
     const validTemplateId = isUuid(templateId) ? templateId : DEFAULT_TEMPLATE_ID;
     const validParticipantId = isUuid(participantId) ? participantId : DEFAULT_PARTICIPANT_ID;
 
-    // 2. Garante sessionId
     if (!sessionId) {
-      sessionId = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `s-${Date.now()}`;
+      sessionId = crypto.randomUUID();
     }
 
     const storagePath = `${sessionId}.webm`;
 
-    // 3. Salva áudio no bucket se enviado
+    // 3. Salva áudio no bucket Supabase Storage
     if (fileBuffer && fileBuffer.length > 0) {
       try {
         const { error: storageErr } = await supabase.storage
@@ -292,15 +85,17 @@ export async function POST(request: NextRequest) {
             upsert: true,
           });
         if (storageErr) {
-          console.warn("[PIPELINE] Aviso storage:", storageErr.message);
+          console.warn("[PIPELINE] Aviso Storage:", storageErr.message);
+        } else {
+          console.log(`[PIPELINE] Áudio gravado com sucesso no Storage: ${storagePath}`);
         }
       } catch (stErr) {
         console.warn("[PIPELINE] Exceção storage upload:", stErr);
       }
     }
 
-    // 4. Cria/atualiza registro inicial na tabela `sessions`
-    await supabase.from("sessions").upsert({
+    // 4. Cria o registro na tabela `sessions` com status 'processando'
+    const { error: dbErr } = await supabase.from("sessions").upsert({
       id: sessionId,
       session_title: sessionTitle,
       audio_input_device: deviceId,
@@ -314,73 +109,26 @@ export async function POST(request: NextRequest) {
       nature: nature,
     });
 
-    // 5. Executa a pipeline de transcrição (Whisper) e estruturação (Gemini)
-    const result = await executeAIPipeline({
-      sessionId,
-      fileBuffer,
-      fileMimeType,
-      targetGroupId: validGroupId,
-      notes: advisorNotes,
-      durationSeconds,
-    });
+    if (dbErr) {
+      console.error("[PIPELINE ERROR] Erro no banco:", dbErr.message);
+    }
 
-    // 6. Retorna a sessão concluída com sucesso
+    // 5. Retorna imediatamente (< 500ms) com 200 OK sem risco de timeout 504
     return NextResponse.json({
       success: true,
       sessionId,
-      status: "concluido",
-      raw_transcription: result.rawTranscription,
-      clinical_note: result.clinicalNoteJson,
-      message: "Sessão processada e estruturada com sucesso.",
+      status: "processando",
+      duration_seconds: durationSeconds,
+      message: "Áudio e metadados recebidos com sucesso.",
     });
   } catch (error: any) {
-    console.error("[PIPELINE ERROR] Falha no processamento da sessão:", error);
+    console.error("[PIPELINE ERROR] Falha no upload:", error);
     return NextResponse.json(
       {
-        error: "Falha durante o processamento da sessão.",
+        error: "Falha durante o recebimento da sessão.",
         details: error?.message || String(error),
       },
       { status: 500 }
     );
   }
-}
-
-// Suporte a chamada GET para disparar/reprocessar uma sessão pendente
-export async function GET(request: NextRequest) {
-  const { searchParams } = new URL(request.url);
-  const sessionId = searchParams.get("sessionId");
-
-  if (!sessionId) {
-    return NextResponse.json({ error: "sessionId é obrigatório" }, { status: 400 });
-  }
-
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://owxsysdzdepwpezsnacz.supabase.co";
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    "";
-
-  const supabase = createClient(supabaseUrl, supabaseKey);
-  const { data: session } = await supabase.from("sessions").select("*").eq("id", sessionId).single();
-
-  if (!session) {
-    return NextResponse.json({ error: "Sessão não encontrada" }, { status: 404 });
-  }
-
-  const result = await executeAIPipeline({
-    sessionId: session.id,
-    fileBuffer: null,
-    fileMimeType: "audio/webm",
-    targetGroupId: session.group_id || DEFAULT_GROUP_ID,
-    notes: session.advisor_notes || "",
-    durationSeconds: session.duration_seconds || 0,
-  });
-
-  return NextResponse.json({
-    success: true,
-    sessionId: session.id,
-    status: "concluido",
-    raw_transcription: result.rawTranscription,
-    clinical_note: result.clinicalNoteJson,
-  });
 }

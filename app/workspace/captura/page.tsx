@@ -16,6 +16,7 @@ import {
   AlertCircle,
   ShieldCheck,
   ChevronDown,
+  ChevronUp,
   Search,
   Plus,
   Volume2,
@@ -112,6 +113,9 @@ export default function CapturaCentralPage() {
   // --- Menu Mobile Drawer ---
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
+  // --- Expansão do Histórico ---
+  const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+
   // --- Estados Principais ---
   const [participants, setParticipants] = useState<Participant[]>(FALLBACK_PARTICIPANTS);
   const [selectedParticipant, setSelectedParticipant] = useState<Participant>(FALLBACK_PARTICIPANTS[0]);
@@ -171,8 +175,7 @@ export default function CapturaCentralPage() {
   // 1. Carrega dados do Supabase
   const loadInitialData = async () => {
     try {
-      // Pacientes
-      const { data: partData, error: partErr } = await supabase
+      const { data: partData } = await supabase
         .from("participants")
         .select("*")
         .order("created_at", { ascending: false });
@@ -182,8 +185,7 @@ export default function CapturaCentralPage() {
         setSelectedParticipant(partData[0]);
       }
 
-      // Templates
-      const { data: tmplData, error: tmplErr } = await supabase
+      const { data: tmplData } = await supabase
         .from("report_templates")
         .select("*")
         .order("created_at", { ascending: true });
@@ -193,13 +195,11 @@ export default function CapturaCentralPage() {
         setSelectedTemplate(tmplData[0]);
       }
 
-      // Grupos
       const { data: grpData } = await supabase.from("research_groups").select("id").limit(1);
       if (grpData && grpData.length > 0) {
         setActiveGroupId(grpData[0].id);
       }
 
-      // Histórico
       await fetchHistory();
     } catch (err) {
       console.warn("[Captura] Erro no carregamento inicial:", err);
@@ -239,7 +239,6 @@ export default function CapturaCentralPage() {
     loadInitialData();
     loadAudioDevices();
 
-    // Auto refresh do histórico a cada 5 segundos para refletir conclusões de processamento
     const interval = setInterval(fetchHistory, 5000);
 
     return () => {
@@ -343,7 +342,6 @@ export default function CapturaCentralPage() {
         return;
       }
 
-      // MediaRecorder real
       let mimeType = "audio/webm;codecs=opus";
       if (typeof MediaRecorder !== "undefined") {
         if (!MediaRecorder.isTypeSupported(mimeType)) {
@@ -364,10 +362,9 @@ export default function CapturaCentralPage() {
         }
       };
 
-      recorder.start(1000); // chunks a cada 1s
+      recorder.start(1000);
       setRecordingState("recording");
 
-      // Inicia cronômetro
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
         setSecondsElapsed((prev) => prev + 1);
@@ -378,7 +375,6 @@ export default function CapturaCentralPage() {
     }
   };
 
-  // Pausar Gravação
   const handlePauseRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
       mediaRecorderRef.current.pause();
@@ -387,7 +383,6 @@ export default function CapturaCentralPage() {
     setRecordingState("paused");
   };
 
-  // Retomar Gravação
   const handleResumeRecording = () => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === "paused") {
       mediaRecorderRef.current.resume();
@@ -398,7 +393,6 @@ export default function CapturaCentralPage() {
     setRecordingState("recording");
   };
 
-  // Descartar Gravação
   const handleResetRecording = () => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
@@ -411,7 +405,6 @@ export default function CapturaCentralPage() {
     setSaveError(null);
   };
 
-  // Abrir Modal de Finalização
   const handleOpenFinishModal = () => {
     if (recordingState === "recording") {
       handlePauseRecording();
@@ -420,19 +413,17 @@ export default function CapturaCentralPage() {
     setIsFinishModalOpen(true);
   };
 
-  // 5. Confirmar e Despachar Batch Real para a API Serverless
+  // 5. Confirmar e Despachar Batch
   const handleConfirmFinishModal = async () => {
     setIsSubmitting(true);
     setSaveError(null);
 
     try {
-      // Para o MediaRecorder e consolida o Blob
       let audioBlob: Blob | null = null;
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
         mediaRecorderRef.current.stop();
       }
 
-      // Pequeno delay para garantir que o último chunk foi gravado no array
       await new Promise((r) => setTimeout(r, 300));
 
       if (recordedChunksRef.current.length > 0) {
@@ -440,7 +431,6 @@ export default function CapturaCentralPage() {
       }
 
       if (!audioBlob || audioBlob.size === 0) {
-        // Fallback para áudio de teste mínimo se nada foi capturado
         audioBlob = new Blob([new Uint8Array(100)], { type: "audio/webm" });
       }
 
@@ -475,11 +465,10 @@ export default function CapturaCentralPage() {
       }
 
       const data = await res.json();
-      console.log("[Captura] Sessão processada com sucesso:", data);
+      console.log("[Captura] Sessão enviada com sucesso:", data);
 
       const createdSessionId = data.sessionId || generatedSessionId;
 
-      // Reseta formulários e cronômetro
       setRecordingState("idle");
       setSecondsElapsed(0);
       setAdvisorNotes("");
@@ -488,7 +477,6 @@ export default function CapturaCentralPage() {
       setIsSubmitting(false);
       setIsFinishModalOpen(false);
 
-      // Redireciona imediatamente para a tela de Curadoria da sessão
       if (createdSessionId) {
         window.location.href = `/workspace/curadoria/${createdSessionId}`;
       }
@@ -499,7 +487,6 @@ export default function CapturaCentralPage() {
     }
   };
 
-  // Cadastrar Novo Paciente Rápido
   const handleCreatePatient = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newPatientFirstName || !newPatientLastName) return;
@@ -572,18 +559,19 @@ export default function CapturaCentralPage() {
       h.participant_id_str.toLowerCase().includes(historySearch.toLowerCase())
   );
 
-  const navLinks = [
-    { href: "/workspace/captura", label: "Captura Central", icon: Mic },
+  const displayedHistory = isHistoryExpanded ? filteredHistory : filteredHistory.slice(0, 3);
+
+  const bottomNavLinks = [
     { href: "/workspace/grupos", label: "Grupos Éticos & CEP", icon: ShieldCheck },
     { href: "/workspace/glossario", label: "Glossário Clínico", icon: BookOpen },
     { href: "/workspace/modelos", label: "Modelos de Notas", icon: FileText },
   ];
 
-  // Componente Reutilizável de Conteúdo da Sidebar (usado no desktop e no mobile drawer)
+  // Componente Reutilizável de Conteúdo da Sidebar
   const renderSidebarContent = () => (
     <>
-      {/* Topo da Sidebar: Identidade Institucional */}
-      <div className="p-4 border-b border-slate-200/70 space-y-3">
+      {/* Topo da Sidebar: Identidade Institucional & Botão Captura de Áudio */}
+      <div className="p-4 border-b border-slate-200/70 space-y-3 shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div
@@ -604,7 +592,7 @@ export default function CapturaCentralPage() {
                   Cloud v14
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">Pure-Batch &bull; LGPD & CEP</p>
+              <p className="text-[11px] text-slate-500 font-medium">Pure-Batch</p>
             </div>
           </div>
 
@@ -617,32 +605,20 @@ export default function CapturaCentralPage() {
           </button>
         </div>
 
-        {/* Links Principais do Workspace */}
-        <nav className="space-y-1 pt-1">
-          {navLinks.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all",
-                  isActive
-                    ? "bg-[#006A55] text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100/80"
-                )}
-              >
-                <Icon className={cn("w-4 h-4", isActive ? "text-white" : "text-slate-400")} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
+        {/* Botão Principal: Captura de Áudio */}
+        <div className="pt-1">
+          <Link
+            href="/workspace/captura"
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="flex items-center gap-2.5 px-3.5 py-2.5 rounded-xl text-xs font-bold bg-[#006A55] text-white shadow-md shadow-[#006A55]/20 hover:opacity-95 transition-all"
+          >
+            <Mic className="w-4 h-4 text-white" />
+            <span>Captura de Áudio</span>
+          </Link>
+        </div>
       </div>
 
-      {/* Lista de Histórico Recente de Gravações */}
+      {/* Meio: Histórico Recente com Suporte a Ver Mais / Ver Menos */}
       <div className="flex-1 overflow-y-auto px-3 py-3 space-y-2.5 custom-scrollbar">
         <div className="flex items-center justify-between px-1 mb-1">
           <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
@@ -664,86 +640,134 @@ export default function CapturaCentralPage() {
         </div>
 
         {filteredHistory.length === 0 ? (
-          <div className="text-center py-8 text-slate-400 text-xs font-medium">
+          <div className="text-center py-6 text-slate-400 text-xs font-medium">
             Nenhuma sessão gravada ainda
           </div>
         ) : (
-          filteredHistory.map((item) => {
-            const getStatusBadge = (status: SessionRecord["status"]) => {
-              switch (status) {
-                case "validado":
-                  return (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Validada
-                    </span>
-                  );
-                case "concluido":
-                  return (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
-                      <FileCheck className="w-3 h-3 text-teal-600" /> Concluída
-                    </span>
-                  );
-                case "processando":
-                  return (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded animate-pulse">
-                      <Activity className="w-3 h-3 animate-spin text-amber-600" /> Processando
-                    </span>
-                  );
-                case "em_rascunho":
-                  return (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
-                      <Clock className="w-3 h-3 text-slate-400" /> Rascunho
-                    </span>
-                  );
-                default:
-                  return (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
-                      Pendente
-                    </span>
-                  );
-              }
-            };
+          <>
+            {displayedHistory.map((item) => {
+              const getStatusBadge = (status: SessionRecord["status"]) => {
+                switch (status) {
+                  case "validado":
+                    return (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                        <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Validada
+                      </span>
+                    );
+                  case "concluido":
+                    return (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal-800 bg-teal-50 border border-teal-200 px-1.5 py-0.5 rounded">
+                        <FileCheck className="w-3 h-3 text-teal-600" /> Concluída
+                      </span>
+                    );
+                  case "processando":
+                    return (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded animate-pulse">
+                        <Activity className="w-3 h-3 animate-spin text-amber-600" /> Processando
+                      </span>
+                    );
+                  case "em_rascunho":
+                    return (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                        <Clock className="w-3 h-3 text-slate-400" /> Rascunho
+                      </span>
+                    );
+                  default:
+                    return (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                        Pendente
+                      </span>
+                    );
+                }
+              };
 
-            return (
-              <Link
-                key={item.id}
-                href={`/workspace/curadoria/${item.id}`}
-                onClick={() => setIsMobileMenuOpen(false)}
-                className="group block relative p-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/80 hover:border-[#006A55]/40 transition-all cursor-pointer shadow-2xs"
-              >
-                <div className="flex items-start justify-between gap-1.5 mb-1">
-                  <h3 className="font-semibold text-xs text-slate-900 group-hover:text-[#006A55] line-clamp-1">
-                    {item.session_title}
-                  </h3>
-                </div>
-
-                <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1.5">
-                  <span className="font-medium text-slate-700 flex items-center gap-1 truncate max-w-[140px]">
-                    <Users className="w-3 h-3 text-slate-400 shrink-0" />
-                    {item.participant_name}
-                  </span>
-                  <span className="text-[10px] font-mono text-slate-400">{item.participant_id_str}</span>
-                </div>
-
-                <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-[10px]">
-                  <div className="flex items-center gap-1.5 text-slate-400">
-                    <span>{item.created_at}</span>
-                    <span>&bull;</span>
-                    <span className="font-mono text-[#006A55] font-bold">
-                      {formatDurationDisplay(item.duration_seconds)}
-                    </span>
+              return (
+                <Link
+                  key={item.id}
+                  href={`/workspace/curadoria/${item.id}`}
+                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="group block relative p-2.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/80 hover:border-[#006A55]/40 transition-all cursor-pointer shadow-2xs"
+                >
+                  <div className="flex items-start justify-between gap-1.5 mb-1">
+                    <h3 className="font-semibold text-xs text-slate-900 group-hover:text-[#006A55] line-clamp-1">
+                      {item.session_title}
+                    </h3>
                   </div>
-                  {getStatusBadge(item.status)}
-                </div>
-              </Link>
-            );
-          })
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1.5">
+                    <span className="font-medium text-slate-700 flex items-center gap-1 truncate max-w-[140px]">
+                      <Users className="w-3 h-3 text-slate-400 shrink-0" />
+                      {item.participant_name}
+                    </span>
+                    <span className="text-[10px] font-mono text-slate-400">{item.participant_id_str}</span>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-1.5 border-t border-slate-100 text-[10px]">
+                    <div className="flex items-center gap-1.5 text-slate-400">
+                      <span>{item.created_at}</span>
+                      <span>&bull;</span>
+                      <span className="font-mono text-[#006A55] font-bold">
+                        {formatDurationDisplay(item.duration_seconds)}
+                      </span>
+                    </div>
+                    {getStatusBadge(item.status)}
+                  </div>
+                </Link>
+              );
+            })}
+
+            {/* Botão Ver Mais / Ver Menos */}
+            {filteredHistory.length > 3 && (
+              <button
+                type="button"
+                onClick={() => setIsHistoryExpanded(!isHistoryExpanded)}
+                className="w-full py-2 text-center text-xs font-bold text-[#006A55] hover:bg-emerald-50 rounded-xl transition-colors cursor-pointer border border-[#006A55]/20 flex items-center justify-center gap-1.5 mt-1"
+              >
+                {isHistoryExpanded ? (
+                  <>
+                    <ChevronUp className="w-3.5 h-3.5" />
+                    <span>Ver Menos</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-3.5 h-3.5" />
+                    <span>Ver Mais ({filteredHistory.length - 3} restantes)</span>
+                  </>
+                )}
+              </button>
+            )}
+          </>
         )}
       </div>
 
-      {/* Rodapé da Sidebar: Grupo de Pesquisa & Ética */}
-      <div className="p-3 bg-slate-50/80 border-t border-slate-200/80 space-y-2">
-        <div className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-slate-200">
+      {/* Parte Inferior Fixa da Sidebar: Os 3 Botões de Navegação + Card Ético */}
+      <div className="p-3 bg-slate-50/90 border-t border-slate-200/80 space-y-2.5 shrink-0">
+        {/* Os Três Botões Fixos na Base */}
+        <nav className="space-y-1">
+          {bottomNavLinks.map((item) => {
+            const Icon = item.icon;
+            const isActive = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setIsMobileMenuOpen(false)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-all",
+                  isActive
+                    ? "bg-[#006A55] text-white shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-white border border-transparent hover:border-slate-200"
+                )}
+              >
+                <Icon className={cn("w-4 h-4", isActive ? "text-white" : "text-slate-400")} />
+                <span>{item.label}</span>
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Card Institucional Lab. Linguagem & Cognição / CAAE */}
+        <div className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-slate-200 shadow-2xs">
           <div className="w-7 h-7 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
             <ShieldCheck className="w-4 h-4 text-[#006A55]" />
           </div>
@@ -858,7 +882,7 @@ export default function CapturaCentralPage() {
           </div>
         )}
 
-        {/* Header de Metadados Clínicos (Responsivo para Celular) */}
+        {/* Header de Metadados Clínicos */}
         <header className="px-4 sm:px-6 py-3.5 border-b border-slate-200/80 bg-white/80 backdrop-blur-md sticky top-0 lg:static z-20">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 w-full max-w-6xl mx-auto">
             {/* Seletor de Paciente */}
@@ -1040,16 +1064,16 @@ export default function CapturaCentralPage() {
         </header>
 
         {/* ========================================================= */}
-        {/* 3. CARD CENTRAL DE GRAVAÇÃO (100% RESPONSIVO)            */}
+        {/* 3. CARD CENTRAL DE GRAVAÇÃO                               */}
         {/* ========================================================= */}
         <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-6 lg:p-8 relative">
           <div className="w-full max-w-xl bg-white/90 backdrop-blur-xl border border-slate-200/90 rounded-3xl p-5 sm:p-8 md:p-10 shadow-xl shadow-slate-900/5 relative z-10 flex flex-col items-center text-center transition-all">
-            {/* Badge de Status */}
+            {/* Badge de Status Clínico */}
             <div className="mb-4">
               {recordingState === "idle" && (
                 <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-100 border border-slate-200 text-slate-700 text-xs font-semibold shadow-xs">
                   <span className="w-2 h-2 rounded-full bg-[#006A55]" />
-                  Pronto para Iniciar Captura &bull; Pure-Batch
+                  Pronto para iniciar a captura
                 </div>
               )}
 
@@ -1085,11 +1109,11 @@ export default function CapturaCentralPage() {
               <span className="text-[#006A55] font-semibold">{selectedTemplate.title}</span>
             </div>
 
-            {/* Cronômetro Central Monospace (Redimensiona no Celular) */}
-            <div className="my-2 sm:my-4">
+            {/* Cronômetro Central Elegante (Tamanho Reduzido Conforme Solicitado) */}
+            <div className="my-2 sm:my-3">
               <div
                 className={cn(
-                  "font-mono text-5xl sm:text-6xl md:text-7xl font-bold tracking-tight select-none transition-colors",
+                  "font-mono text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight select-none transition-colors",
                   recordingState === "recording"
                     ? "text-[#D32F2F]"
                     : recordingState === "paused"
@@ -1180,16 +1204,16 @@ export default function CapturaCentralPage() {
               </div>
             </div>
 
-            {/* Botões de Ação de Gravação (Responsivo) */}
+            {/* Botão de Ação: INICIAR GRAVAÇÃO (Maior e Destacado) */}
             <div className="flex flex-wrap items-center justify-center gap-3 w-full">
               {recordingState === "idle" && (
                 <button
                   onClick={handleStartRecording}
                   style={{ backgroundColor: "#006A55" }}
-                  className="w-full sm:w-auto flex items-center justify-center gap-2.5 px-6 py-3.5 rounded-2xl text-white font-bold text-xs shadow-lg shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer"
+                  className="w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 rounded-2xl text-white font-bold text-sm sm:text-base shadow-xl shadow-[#006A55]/25 hover:opacity-90 hover:scale-[1.02] active:scale-98 transition-all cursor-pointer"
                 >
-                  <Mic className="w-4 h-4" />
-                  Iniciar Gravação da Sessão
+                  <Mic className="w-5 h-5 text-white" />
+                  <span>Iniciar Gravação</span>
                 </button>
               )}
 
@@ -1197,7 +1221,7 @@ export default function CapturaCentralPage() {
                 <>
                   <button
                     onClick={handlePauseRecording}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-3 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs border border-slate-200 transition-all cursor-pointer shadow-xs"
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs border border-slate-200 transition-all cursor-pointer shadow-xs"
                   >
                     <Pause className="w-4 h-4 text-amber-600" />
                     Pausar
@@ -1206,7 +1230,7 @@ export default function CapturaCentralPage() {
                   <button
                     onClick={handleOpenFinishModal}
                     style={{ backgroundColor: "#006A55" }}
-                    className="flex-2 sm:flex-initial flex items-center justify-center gap-2 px-6 py-3 rounded-2xl text-white font-bold text-xs shadow-lg shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer"
+                    className="flex-2 sm:flex-initial flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl text-white font-bold text-xs sm:text-sm shadow-lg shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer"
                   >
                     <Sparkles className="w-4 h-4" />
                     Finalizar e Gerar Nota
@@ -1215,7 +1239,7 @@ export default function CapturaCentralPage() {
                   <button
                     onClick={handleResetRecording}
                     title="Descartar gravação atual"
-                    className="p-3 rounded-2xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-all cursor-pointer shadow-xs"
+                    className="p-3.5 rounded-2xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-all cursor-pointer shadow-xs"
                   >
                     <RotateCcw className="w-4 h-4" />
                   </button>
@@ -1227,7 +1251,7 @@ export default function CapturaCentralPage() {
                   <button
                     onClick={handleResumeRecording}
                     style={{ backgroundColor: "#006A55" }}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-3 rounded-2xl text-white font-bold text-xs shadow-md shadow-[#006A55]/20 hover:opacity-90 transition-all cursor-pointer"
+                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 px-5 py-3.5 rounded-2xl text-white font-bold text-xs shadow-md shadow-[#006A55]/20 hover:opacity-90 transition-all cursor-pointer"
                   >
                     <Play className="w-4 h-4" />
                     Retomar
@@ -1235,7 +1259,7 @@ export default function CapturaCentralPage() {
 
                   <button
                     onClick={handleOpenFinishModal}
-                    className="flex-2 sm:flex-initial flex items-center justify-center gap-2 px-6 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition-all cursor-pointer"
+                    className="flex-2 sm:flex-initial flex items-center justify-center gap-2 px-7 py-3.5 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs sm:text-sm shadow-md transition-all cursor-pointer"
                   >
                     <Sparkles className="w-4 h-4" />
                     Finalizar e Gerar Nota
@@ -1244,7 +1268,7 @@ export default function CapturaCentralPage() {
                   <button
                     onClick={handleResetRecording}
                     title="Descartar gravação"
-                    className="p-3 rounded-2xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-all cursor-pointer shadow-xs"
+                    className="p-3.5 rounded-2xl bg-white hover:bg-rose-50 text-slate-400 hover:text-rose-600 border border-slate-200 transition-all cursor-pointer shadow-xs"
                   >
                     <RotateCcw className="w-4 h-4" />
                   </button>
@@ -1361,7 +1385,7 @@ export default function CapturaCentralPage() {
                 {isSubmitting ? (
                   <>
                     <Activity className="w-4 h-4 animate-spin" />
-                    Transcrevendo & Estruturando...
+                    Enviando Áudio...
                   </>
                 ) : (
                   <>

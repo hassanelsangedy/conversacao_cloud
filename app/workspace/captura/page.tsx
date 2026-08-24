@@ -562,6 +562,7 @@ export default function CapturaCentralPage() {
   const displayedHistory = isHistoryExpanded ? filteredHistory : filteredHistory.slice(0, 3);
 
   const bottomNavLinks = [
+    { href: "/workspace/participantes", label: "Participantes", icon: Users },
     { href: "/workspace/grupos", label: "Grupos", icon: ShieldCheck },
     { href: "/workspace/glossario", label: "Glossário", icon: BookOpen },
     { href: "/workspace/modelos", label: "Relatórios", icon: FileText },

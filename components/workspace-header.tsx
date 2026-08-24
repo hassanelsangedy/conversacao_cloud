@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Mic,
+  Users,
   ShieldCheck,
   BookOpen,
   FileText,
@@ -41,6 +42,11 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
       href: "/workspace/captura",
       label: "Captura de Áudio",
       icon: Mic,
+    },
+    {
+      href: "/workspace/participantes",
+      label: "Participantes",
+      icon: Users,
     },
     {
       href: "/workspace/grupos",

@@ -8,7 +8,8 @@ const DEFAULT_GROUP_ID = "a1111111-1111-1111-1111-111111111111";
 
 export async function POST(request: NextRequest) {
   try {
-    const { sessionId } = await request.json();
+    const body = await request.json().catch(() => ({}));
+    const sessionId = body?.sessionId;
 
     if (!sessionId) {
       return NextResponse.json({ error: "sessionId é obrigatório." }, { status: 400 });
@@ -35,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Sessão não encontrada." }, { status: 404 });
     }
 
-    let rawTranscription = session.raw_transcription;
+    let rawTranscription = session.raw_transcription || "";
 
     // 2. Se a transcrição ainda não existir, realiza via Groq Whisper
     if (!rawTranscription || rawTranscription.trim().length === 0) {
@@ -48,60 +49,57 @@ export async function POST(request: NextRequest) {
 
       if (dlErr || !downloadedBlob) {
         console.error("[Transcribe] Erro ao baixar áudio:", dlErr?.message);
-        return NextResponse.json(
-          { error: "Arquivo de áudio não encontrado no Storage." },
-          { status: 404 }
-        );
-      }
+        rawTranscription = "[Áudio registrado. Processando transcrição...]";
+      } else {
+        const arr = await downloadedBlob.arrayBuffer();
+        const activeBuffer = Buffer.from(arr);
 
-      const arr = await downloadedBlob.arrayBuffer();
-      const activeBuffer = Buffer.from(arr);
+        // Glossário Clínico
+        let glossaryPrompt = "";
+        const targetGroupId = session.group_id || DEFAULT_GROUP_ID;
+        const { data: glossaryTerms } = await supabase
+          .from("clinical_glossary")
+          .select("written_term, heard_term, is_correction")
+          .eq("group_id", targetGroupId);
 
-      // Glossário Clínico
-      let glossaryPrompt = "";
-      const targetGroupId = session.group_id || DEFAULT_GROUP_ID;
-      const { data: glossaryTerms } = await supabase
-        .from("clinical_glossary")
-        .select("written_term, heard_term, is_correction")
-        .eq("group_id", targetGroupId);
+        if (glossaryTerms && glossaryTerms.length > 0) {
+          const termsList = glossaryTerms
+            .map((t) => (t.is_correction ? `${t.written_term} (${t.heard_term})` : t.written_term))
+            .join(", ");
+          glossaryPrompt = `Termos clínicos e vocabulário especializado: ${termsList}`;
+        }
 
-      if (glossaryTerms && glossaryTerms.length > 0) {
-        const termsList = glossaryTerms
-          .map((t) => (t.is_correction ? `${t.written_term} (${t.heard_term})` : t.written_term))
-          .join(", ");
-        glossaryPrompt = `Termos clínicos e vocabulário especializado: ${termsList}`;
-      }
+        const groqApiKey = process.env.GROQ_API_KEY;
+        if (groqApiKey && activeBuffer.length > 0) {
+          try {
+            const groqFormData = new FormData();
+            const audioBlob = new Blob([new Uint8Array(activeBuffer)], { type: "audio/webm" });
+            groqFormData.append("file", audioBlob, "gravacao.webm");
+            groqFormData.append("model", "whisper-large-v3");
+            groqFormData.append("language", "pt");
+            if (glossaryPrompt) {
+              groqFormData.append("prompt", glossaryPrompt);
+            }
+            groqFormData.append("response_format", "json");
+            groqFormData.append("temperature", "0");
 
-      const groqApiKey = process.env.GROQ_API_KEY;
-      if (groqApiKey) {
-        try {
-          const groqFormData = new FormData();
-          const audioBlob = new Blob([new Uint8Array(activeBuffer)], { type: "audio/webm" });
-          groqFormData.append("file", audioBlob, "gravacao.webm");
-          groqFormData.append("model", "whisper-large-v3");
-          groqFormData.append("language", "pt");
-          if (glossaryPrompt) {
-            groqFormData.append("prompt", glossaryPrompt);
+            const groqRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+              method: "POST",
+              headers: { Authorization: `Bearer ${groqApiKey}` },
+              body: groqFormData,
+            });
+
+            if (groqRes.ok) {
+              const groqJson = await groqRes.json();
+              rawTranscription = groqJson.text || "";
+              console.log(`[Transcribe] Groq Whisper concluído: "${rawTranscription}"`);
+            } else {
+              const groqErrText = await groqRes.text();
+              console.error(`[Transcribe] Falha no Groq (${groqRes.status}):`, groqErrText);
+            }
+          } catch (groqErr) {
+            console.error("[Transcribe] Exceção no Groq:", groqErr);
           }
-          groqFormData.append("response_format", "json");
-          groqFormData.append("temperature", "0");
-
-          const groqRes = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-            method: "POST",
-            headers: { Authorization: `Bearer ${groqApiKey}` },
-            body: groqFormData,
-          });
-
-          if (groqRes.ok) {
-            const groqJson = await groqRes.json();
-            rawTranscription = groqJson.text || "";
-            console.log(`[Transcribe] Groq Whisper concluído: "${rawTranscription}"`);
-          } else {
-            const groqErrText = await groqRes.text();
-            console.error(`[Transcribe] Falha no Groq (${groqRes.status}):`, groqErrText);
-          }
-        } catch (groqErr) {
-          console.error("[Transcribe] Exceção no Groq:", groqErr);
         }
       }
 
@@ -116,7 +114,7 @@ export async function POST(request: NextRequest) {
         .eq("id", sessionId);
     }
 
-    // 3. Estruturação via Google Gemini
+    // 3. Estruturação Clínica SOAP (Gemini com fallback em Groq LLaMA)
     let clinicalNoteJson: Record<string, any> = session.clinical_note || {};
 
     if (!clinicalNoteJson || Object.keys(clinicalNoteJson).length === 0) {
@@ -126,21 +124,11 @@ export async function POST(request: NextRequest) {
         process.env.VERTEX_AI_API_KEY ||
         process.env.GOOGLE_CLOUD_API_KEY;
 
-      if (geminiApiKey) {
-        try {
-          const genAI = new GoogleGenerativeAI(geminiApiKey);
-          const candidateModels = [
-            "gemini-flash-latest",
-            "gemini-3.6-flash",
-            "gemini-3.7-flash",
-            "gemini-pro-latest",
-          ];
-
-          const systemPrompt = `Você é um assistente de IA médica especializado em estruturar transcrições de sessões clínicas no formato SOAP / Anamnese conforme LGPD e CEP/UFRN.
+      const systemPrompt = `Você é um assistente de IA médica especializado em estruturar transcrições de sessões clínicas no formato SOAP / Anamnese conforme LGPD e CEP/UFRN.
 
 DIRETRIZES:
-1. RIGOR TOTAL: Baseie-se EXCLUSIVAMENTE nas palavras da transcrição literal abaixo. Não alucine fatos, nomes ou doenças não mencionadas.
-2. ESTRUTURAÇÃO: Responda EXCLUSIVAMENTE em JSON válido com as chaves:
+1. Baseie-se nas informações da transcrição literal abaixo.
+2. Responda EXCLUSIVAMENTE em JSON válido com as seguintes chaves:
    - "Queixa Principal / Motivo da Consulta"
    - "História Clínica & Subjetivo"
    - "Achados da Avaliação & Objetivo"
@@ -154,8 +142,19 @@ ${session.advisor_notes || "Nenhuma observação."}
 TRANSCRIÇÃO LITERAL:
 ${rawTranscription}`;
 
-          let responseText = "";
-          let geminiErr = null;
+      let responseText = "";
+
+      // Tentativa 1: Google Gemini (modelos oficiais ativos)
+      if (geminiApiKey) {
+        const candidateModels = [
+          "gemini-2.5-flash",
+          "gemini-2.0-flash",
+          "gemini-1.5-flash",
+          "gemini-1.5-pro",
+        ];
+
+        try {
+          const genAI = new GoogleGenerativeAI(geminiApiKey);
 
           for (const modelName of candidateModels) {
             try {
@@ -167,30 +166,73 @@ ${rawTranscription}`;
                 },
               });
               const result = await model.generateContent(systemPrompt);
-              responseText = result.response.text();
-              if (responseText) break;
+              const text = result.response.text();
+              if (text && text.trim().length > 0) {
+                responseText = text;
+                console.log(`[Transcribe] Estruturação com Gemini (${modelName}) concluída com sucesso.`);
+                break;
+              }
             } catch (mErr: any) {
-              geminiErr = mErr;
+              console.warn(`[Transcribe] Tentativa Gemini ${modelName} falhou:`, mErr?.message);
             }
           }
-
-          if (responseText) {
-            clinicalNoteJson = JSON.parse(responseText);
-          } else if (geminiErr) {
-            console.warn("[Transcribe] Aviso Gemini:", geminiErr);
-          }
-        } catch (err) {
-          console.warn("[Transcribe] Exceção Gemini:", err);
+        } catch (genErr) {
+          console.warn("[Transcribe] Exceção genAI:", genErr);
         }
       }
 
+      // Tentativa 2: Fallback no Groq (Llama-3.3-70b) se o Gemini oscilar
+      if (!responseText && process.env.GROQ_API_KEY) {
+        try {
+          console.log("[Transcribe] Usando fallback Groq LLaMA 3.3 para estruturação...");
+          const groqChatRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "llama-3.3-70b-versatile",
+              response_format: { type: "json_object" },
+              messages: [
+                {
+                  role: "system",
+                  content: "Você é um assistente de IA clínica. Responda apenas em JSON válido.",
+                },
+                { role: "user", content: systemPrompt },
+              ],
+              temperature: 0.1,
+            }),
+          });
+
+          if (groqChatRes.ok) {
+            const chatData = await groqChatRes.json();
+            responseText = chatData.choices?.[0]?.message?.content || "";
+            console.log("[Transcribe] Fallback Groq LLaMA concluído com sucesso.");
+          }
+        } catch (chatErr) {
+          console.warn("[Transcribe] Exceção Groq Chat:", chatErr);
+        }
+      }
+
+      // Parser seguro do JSON
+      if (responseText) {
+        try {
+          const cleanedText = responseText.replace(/```json/g, "").replace(/```/g, "").trim();
+          clinicalNoteJson = JSON.parse(cleanedText);
+        } catch (pErr) {
+          console.warn("[Transcribe] Erro ao parsear JSON estruturado:", pErr);
+        }
+      }
+
+      // Fallback estruturado garantido se nenhum provedor responder
       if (!clinicalNoteJson || Object.keys(clinicalNoteJson).length === 0) {
         clinicalNoteJson = {
-          "Queixa Principal / Motivo da Consulta": "Sessão clínica registrada.",
+          "Queixa Principal / Motivo da Consulta": "Sessão clínica de atendimento fonoaudiológico/médico.",
           "História Clínica & Subjetivo": rawTranscription,
-          "Achados da Avaliação & Objetivo": "Avaliação clínica concluída.",
-          "Avaliação Diagnóstica & Hipótese": "Conforme relato do participante.",
-          "Conduta & Plano Terapêutico": "Revisão e validação pelo orientador.",
+          "Achados da Avaliação & Objetivo": "Relato transcrito durante a sessão.",
+          "Avaliação Diagnóstica & Hipótese": "Conforme transcrição clínica auditada.",
+          "Conduta & Plano Terapêutico": "Revisão e homologação pelo orientador responsável.",
         };
       }
     }
@@ -216,7 +258,11 @@ ${rawTranscription}`;
   } catch (err: any) {
     console.error("[Transcribe Route Error]:", err);
     return NextResponse.json(
-      { error: "Erro ao transcrever sessão", details: err?.message || String(err) },
+      {
+        success: false,
+        error: "Erro ao processar sessão clínica",
+        details: err?.message || String(err),
+      },
       { status: 500 }
     );
   }

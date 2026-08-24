@@ -469,6 +469,14 @@ export default function CapturaCentralPage() {
 
       const createdSessionId = data.sessionId || generatedSessionId;
 
+      // Dispara o processamento em background
+      fetch("/api/transcribe-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: createdSessionId }),
+      }).catch((err) => console.warn("[Captura] Transcribe trigger background:", err));
+
+      // Reseta a interface para uma nova captura imediata
       setRecordingState("idle");
       setSecondsElapsed(0);
       setAdvisorNotes("");
@@ -477,9 +485,16 @@ export default function CapturaCentralPage() {
       setIsSubmitting(false);
       setIsFinishModalOpen(false);
 
-      if (createdSessionId) {
-        window.location.href = `/workspace/curadoria/${createdSessionId}`;
-      }
+      // Notificação de sucesso não-bloqueante com link direto para o relatório
+      setToastNotification({
+        title: "Gravação Despachada com Sucesso!",
+        description:
+          "O áudio está sendo processado pela IA em segundo plano. Você pode realizar uma nova gravação agora ou abrir o relatório estruturado.",
+        sessionId: createdSessionId,
+      });
+
+      // Atualiza o histórico na sidebar imediatamente
+      await fetchHistory();
     } catch (err: any) {
       console.error("[Captura] Exceção durante o despacho:", err);
       setSaveError(`Falha de conexão: ${err?.message || String(err)}`);

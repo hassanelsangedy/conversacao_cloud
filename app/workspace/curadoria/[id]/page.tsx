@@ -169,7 +169,7 @@ export default function CuradoriaSessionPage() {
     async (id: string) => {
       setIsProcessingAI(true);
       setProcessingError(null);
-      setProcessingStep("Transcrevendo com Whisper Large v3 e estruturando com Gemini...");
+      setProcessingStep("Transcrevendo com Whisper Large v3 e estruturando relatório...");
 
       try {
         const res = await fetch("/api/transcribe-session", {
@@ -178,10 +178,17 @@ export default function CuradoriaSessionPage() {
           body: JSON.stringify({ sessionId: id }),
         });
 
-        const data = await res.json();
+        const rawText = await res.text();
+        let data: any = null;
 
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || data.details || "Falha no processamento de IA.");
+        try {
+          data = JSON.parse(rawText);
+        } catch {
+          console.warn("[Curadoria] Resposta não-JSON recebida:", rawText.slice(0, 100));
+        }
+
+        if (!res.ok || !data?.success) {
+          throw new Error(data?.error || data?.details || "Falha temporária no processamento de IA.");
         }
 
         setRawTranscription(data.raw_transcription || "");

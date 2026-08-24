@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -102,101 +102,7 @@ export default function CuradoriaSessionPage() {
   } | null>(null);
   const [isHomologationModalOpen, setIsHomologationModalOpen] = useState(false);
 
-  // 1. Carrega dados reais da sessão do Supabase com suporte a polling
-  useEffect(() => {
-    let isMounted = true;
-    let pollTimeout: NodeJS.Timeout | null = null;
-    let retryCount = 0;
-    const MAX_RETRIES = 3;
-
-    async function loadSession() {
-      if (!sessionId) return;
-      setErrorMessage(null);
-
-      try {
-        console.log("[Curadoria] Carregando sessão real do Supabase:", sessionId);
-        const { data, error } = await supabase
-          .from("sessions")
-          .select("*, participants(*), report_templates(*), research_groups(*)")
-          .eq("id", sessionId)
-          .maybeSingle();
-
-        if (!isMounted) return;
-
-        if (error) {
-          console.error("[Curadoria] Erro ao buscar sessão no Supabase:", error.message);
-          setErrorMessage(`Erro ao consultar o banco de dados: ${error.message}`);
-          setSession(null);
-          setLoading(false);
-          return;
-        }
-
-        if (!data) {
-          retryCount++;
-          if (retryCount <= MAX_RETRIES) {
-            console.warn(`[Curadoria] Tentativa ${retryCount}/${MAX_RETRIES}: aguardando processamento da sessão...`);
-            pollTimeout = setTimeout(loadSession, 2000);
-            return;
-          } else {
-            console.error("[Curadoria] Sessão não encontrada após tentativas.");
-            setErrorMessage("Sessão não encontrada no banco de dados.");
-            setSession(null);
-            setLoading(false);
-            return;
-          }
-        }
-
-        console.log("[Curadoria] Dados reais recuperados do banco:", data);
-        setSession(data);
-
-        // Inicializa Transcrição
-        const initialTranscription = data.raw_transcription || "";
-        setRawTranscription(initialTranscription);
-        setOriginalAiTranscription((prev) => prev || initialTranscription);
-
-        // Inicializa Campos Clínicos
-        initFields(data.clinical_note);
-        setLoading(false);
-
-        // Se a sessão ainda estiver com status 'processando', agenda polling para atualizar quando concluir
-        if (data.status === "processando") {
-          pollTimeout = setTimeout(loadSession, 2500);
-        }
-
-        // Se o áudio estiver no Storage, gera URL assinada temporária para reprodução no player
-        if (data.audio_storage_path) {
-          try {
-            const { data: signedData, error: signErr } = await supabase.storage
-              .from("audio-sessions")
-              .createSignedUrl(data.audio_storage_path, 3600);
-
-            if (signedData?.signedUrl && isMounted) {
-              setAudioUrl(signedData.signedUrl);
-              console.log("[Curadoria] URL assinada de áudio gerada com sucesso.");
-            } else if (signErr) {
-              console.warn("[Curadoria] Aviso ao gerar signedUrl:", signErr.message);
-            }
-          } catch (stSignErr) {
-            console.warn("[Curadoria] Exceção ao gerar signedUrl de áudio:", stSignErr);
-          }
-        }
-      } catch (err: any) {
-        if (!isMounted) return;
-        console.error("[Curadoria] Exceção inesperada:", err);
-        setErrorMessage(err?.message || "Falha inesperada ao carregar sessão.");
-        setLoading(false);
-      }
-    }
-
-    loadSession();
-
-    return () => {
-      isMounted = false;
-      if (pollTimeout) clearTimeout(pollTimeout);
-    };
-  }, [sessionId, supabase]);
-
-  const initFields = (noteJson?: Record<string, any> | null) => {
+  const initFields = useCallback((noteJson?: Record<string, any> | null) => {
     if (!noteJson) {
       setNoteFields({});
       setOriginalAiFields({});
@@ -217,15 +123,108 @@ export default function CuradoriaSessionPage() {
     });
 
     setNoteFields(formatted);
-    // Preserva a versão original gerada pela IA
     setOriginalAiFields((prev) => (Object.keys(prev).length === 0 ? formatted : prev));
-  };
+  }, []);
+
+  // 1. Carrega dados reais da sessão do Supabase com auto-processamento
+  useEffect(() => {
+    let isMounted = true;
+    let pollTimeout: NodeJS.Timeout | null = null;
+    let retryCount = 0;
+    const MAX_RETRIES = 5;
+
+    async function loadSession() {
+      if (!sessionId) return;
+      setErrorMessage(null);
+
+      try {
+        console.log("[Curadoria] Carregando sessão do Supabase:", sessionId);
+        const { data, error } = await supabase
+          .from("sessions")
+          .select("*, participants(*), report_templates(*), research_groups(*)")
+          .eq("id", sessionId)
+          .maybeSingle();
+
+        if (!isMounted) return;
+
+        if (error) {
+          console.error("[Curadoria] Erro no Supabase:", error.message);
+          setErrorMessage(`Erro no banco de dados: ${error.message}`);
+          setSession(null);
+          setLoading(false);
+          return;
+        }
+
+        if (!data) {
+          retryCount++;
+          if (retryCount <= MAX_RETRIES) {
+            pollTimeout = setTimeout(loadSession, 2000);
+            return;
+          } else {
+            setErrorMessage("Sessão não encontrada.");
+            setSession(null);
+            setLoading(false);
+            return;
+          }
+        }
+
+        setSession(data);
+
+        // Inicializa Transcrição e Campos
+        const initialTranscription = data.raw_transcription || "";
+        setRawTranscription(initialTranscription);
+        setOriginalAiTranscription((prev) => prev || initialTranscription);
+        initFields(data.clinical_note);
+        setLoading(false);
+
+        // Se ainda estiver com status 'processando', dispara o endpoint para garantir a conclusão
+        if (data.status === "processando") {
+          fetch(`/api/process-session?sessionId=${data.id}`)
+            .then((r) => r.json())
+            .then((res) => {
+              if (res.success && isMounted) {
+                setRawTranscription(res.raw_transcription || "");
+                setOriginalAiTranscription(res.raw_transcription || "");
+                initFields(res.clinical_note);
+                setSession((prev) => (prev ? { ...prev, status: "concluido", raw_transcription: res.raw_transcription, clinical_note: res.clinical_note } : prev));
+              }
+            })
+            .catch(() => {});
+
+          pollTimeout = setTimeout(loadSession, 3000);
+        }
+
+        // Se o áudio estiver no Storage, gera URL assinada temporária para o player
+        if (data.audio_storage_path) {
+          try {
+            const { data: signedData } = await supabase.storage
+              .from("audio-sessions")
+              .createSignedUrl(data.audio_storage_path, 3600);
+
+            if (signedData?.signedUrl && isMounted) {
+              setAudioUrl(signedData.signedUrl);
+            }
+          } catch {}
+        }
+      } catch (err: any) {
+        if (!isMounted) return;
+        setErrorMessage(err?.message || "Falha ao carregar sessão.");
+        setLoading(false);
+      }
+    }
+
+    loadSession();
+
+    return () => {
+      isMounted = false;
+      if (pollTimeout) clearTimeout(pollTimeout);
+    };
+  }, [sessionId, supabase, initFields]);
 
   // Edição Manual de um Campo Clínico
   const handleFieldChange = (key: string, value: string) => {
     setNoteFields((prev) => ({ ...prev, [key]: value }));
 
-    // Rastreamento visual de auditoria contra a versão original da IA
     if (value !== originalAiFields[key]) {
       setEditedFields((prev) => new Set(prev).add(key));
     } else {
@@ -250,11 +249,11 @@ export default function CuradoriaSessionPage() {
     setFeedbackToast({
       type: "info",
       title: "Campo Revertido",
-      message: `A seção "${key}" foi restaurada para o texto original gerado pela IA.`,
+      message: `A seção "${key}" foi restaurada para o texto original da IA.`,
     });
   };
 
-  // Reversão da Transcrição para a versão original do Whisper
+  // Reversão da Transcrição
   const handleRevertTranscription = () => {
     setRawTranscription(originalAiTranscription);
     setFeedbackToast({
@@ -285,13 +284,13 @@ export default function CuradoriaSessionPage() {
       }
 
       initFields(data.clinical_note);
-      setOriginalAiFields({}); // atualiza para a nova versão base
+      setOriginalAiFields({});
       setEditedFields(new Set());
 
       setFeedbackToast({
         type: "success",
-        title: "Nota Reestruturada com Sucesso!",
-        message: "O Gemini gerou um novo relatório SOAP baseado na sua transcrição corrigida.",
+        title: "Nota Reestruturada!",
+        message: "O relatório estruturado foi atualizado com base na sua transcrição corrigida.",
       });
     } catch (err: any) {
       setFeedbackToast({
@@ -318,9 +317,7 @@ export default function CuradoriaSessionPage() {
         })
         .eq("id", sessionId);
 
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
 
       setSession((prev) =>
         prev
@@ -336,7 +333,7 @@ export default function CuradoriaSessionPage() {
       setFeedbackToast({
         type: "success",
         title: "Rascunho Salvo!",
-        message: "A transcrição e as notas clínicas editadas foram salvas com sucesso no banco de dados.",
+        message: "As edições foram salvas com sucesso no banco de dados.",
       });
     } catch (err: any) {
       setFeedbackToast({
@@ -357,16 +354,10 @@ export default function CuradoriaSessionPage() {
 
       // a) Purga física permanente do arquivo de áudio no Supabase Storage
       if (session?.audio_storage_path) {
-        const { error: storageError } = await supabase.storage
-          .from("audio-sessions")
-          .remove([session.audio_storage_path]);
-
-        if (storageError) {
-          console.warn("[Purga LGPD] Aviso ao remover áudio do storage:", storageError.message);
-        }
+        await supabase.storage.from("audio-sessions").remove([session.audio_storage_path]);
       }
 
-      // b) Atualiza a sessão: status = 'validado', is_validated_by_advisor = true, audio_storage_path = null
+      // b) Atualiza a sessão
       const { error: dbError } = await supabase
         .from("sessions")
         .update({
@@ -378,9 +369,7 @@ export default function CuradoriaSessionPage() {
         })
         .eq("id", sessionId);
 
-      if (dbError) {
-        throw dbError;
-      }
+      if (dbError) throw dbError;
 
       setSession((prev) =>
         prev
@@ -439,7 +428,6 @@ export default function CuradoriaSessionPage() {
     });
   };
 
-  // Imprimir / Exportar PDF
   const handlePrint = () => {
     window.print();
   };
@@ -483,8 +471,8 @@ export default function CuradoriaSessionPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-6 text-slate-700 font-sans">
-        <div className="bg-white/80 backdrop-blur-md border border-slate-200 p-8 rounded-3xl shadow-sm text-center flex flex-col items-center gap-3">
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-4 text-slate-700 font-sans">
+        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-6 sm:p-8 rounded-3xl shadow-sm text-center flex flex-col items-center gap-3 max-w-sm w-full">
           <Activity className="w-8 h-8 text-[#006A55] animate-spin" />
           <h2 className="text-sm font-bold text-slate-900">Carregando Espelho Clínico...</h2>
           <p className="text-xs text-slate-500">Recuperando transcrição literal e nota estruturada do banco.</p>
@@ -495,8 +483,8 @@ export default function CuradoriaSessionPage() {
 
   if (errorMessage || !session) {
     return (
-      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-6 text-slate-700 font-sans">
-        <div className="bg-white/85 backdrop-blur-md border border-slate-200 p-8 rounded-3xl shadow-sm text-center max-w-md w-full space-y-4">
+      <div className="min-h-screen bg-[#F8F9FA] flex items-center justify-center p-4 text-slate-700 font-sans">
+        <div className="bg-white/90 backdrop-blur-md border border-slate-200 p-6 sm:p-8 rounded-3xl shadow-sm text-center max-w-md w-full space-y-4">
           <div className="w-12 h-12 rounded-2xl bg-rose-50 text-rose-600 border border-rose-200 flex items-center justify-center mx-auto">
             <AlertCircle className="w-6 h-6" />
           </div>
@@ -522,7 +510,7 @@ export default function CuradoriaSessionPage() {
     <div className="min-h-screen bg-[#F8F9FA] text-slate-800 font-sans antialiased flex flex-col selection:bg-[#006A55] selection:text-white print:bg-white print:text-black">
       {/* Toast Feedback */}
       {feedbackToast && (
-        <div className="fixed top-5 right-5 z-50 max-w-md animate-in slide-in-from-top duration-300 print:hidden">
+        <div className="fixed top-4 right-4 left-4 sm:left-auto sm:right-5 z-50 max-w-md animate-in slide-in-from-top duration-300 print:hidden">
           <div
             className={cn(
               "p-4 rounded-2xl border backdrop-blur-xl shadow-xl flex items-start gap-3",
@@ -552,22 +540,22 @@ export default function CuradoriaSessionPage() {
         </div>
       )}
 
-      {/* Header Superior da Curadoria */}
-      <header className="px-6 py-3.5 bg-white/80 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 flex flex-wrap items-center justify-between gap-4 print:hidden">
+      {/* Header Superior da Curadoria (Totalmente Responsivo) */}
+      <header className="px-4 sm:px-6 py-3 bg-white/85 backdrop-blur-md border-b border-slate-200/80 sticky top-0 z-30 flex flex-col sm:flex-row sm:items-center justify-between gap-3 print:hidden">
         <div className="flex items-center gap-3">
           <Link
             href="/workspace/captura"
-            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 text-xs font-semibold"
+            className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors flex items-center gap-1.5 text-xs font-semibold shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>Voltar à Captura</span>
+            <span className="hidden sm:inline">Voltar à Captura</span>
           </Link>
 
-          <div className="h-5 w-px bg-slate-200" />
+          <div className="h-5 w-px bg-slate-200 hidden sm:block" />
 
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-bold text-slate-900 tracking-tight">
+          <div className="overflow-hidden">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-sm font-bold text-slate-900 tracking-tight truncate">
                 {session.session_title || "Sessão Clínica"}
               </h1>
               {session.status === "validado" && (
@@ -591,45 +579,45 @@ export default function CuradoriaSessionPage() {
                 </span>
               )}
             </div>
-            <p className="text-[11px] text-slate-500 flex items-center gap-2 mt-0.5">
+            <p className="text-[10px] sm:text-[11px] text-slate-500 flex flex-wrap items-center gap-1.5 mt-0.5">
               <span>
-                Participante: <strong>{session.participants ? `${session.participants.first_name} ${session.participants.last_name}` : "Geral"}</strong>
+                <strong>{session.participants ? `${session.participants.first_name} ${session.participants.last_name}` : "Geral"}</strong>
                 {session.participants?.auto_id && ` (${session.participants.auto_id})`}
               </span>
               <span>&bull;</span>
-              <span>Duração: {formatSeconds(session.duration_seconds || 0)}</span>
+              <span>{formatSeconds(session.duration_seconds || 0)}</span>
               <span>&bull;</span>
-              <span>Template: {session.report_templates?.title || "SOAP Padrão"}</span>
+              <span className="truncate">{session.report_templates?.title || "SOAP Padrão"}</span>
             </p>
           </div>
         </div>
 
         {/* Botões de Ação de Curadoria */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
           {session.status === "validado" ? (
             <>
               <button
                 onClick={handleCopyNote}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-2xs cursor-pointer"
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer"
               >
                 {isCopied ? <Check className="w-3.5 h-3.5 text-[#006A55]" /> : <Copy className="w-3.5 h-3.5 text-slate-500" />}
-                {isCopied ? "Copiado!" : "Copiar Texto"}
+                {isCopied ? "Copiado!" : "Copiar"}
               </button>
 
               <button
                 onClick={handlePrint}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-2xs cursor-pointer"
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer"
               >
                 <Printer className="w-3.5 h-3.5 text-slate-500" />
-                Imprimir / PDF
+                Imprimir
               </button>
 
               <div
                 style={{ backgroundColor: "rgba(0, 106, 85, 0.1)", color: "#006A55" }}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold border border-[#006A55]/30"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border border-[#006A55]/30"
               >
                 <ShieldCheck className="w-4 h-4 text-[#006A55]" />
-                Relatório Homologado
+                Homologado
               </div>
             </>
           ) : (
@@ -637,20 +625,20 @@ export default function CuradoriaSessionPage() {
               <button
                 onClick={handleSaveDraft}
                 disabled={isSaving}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-2xs cursor-pointer disabled:opacity-50"
               >
                 <Save className="w-3.5 h-3.5 text-slate-500" />
-                {isSaving ? "Salvando..." : "Salvar Rascunho"}
+                {isSaving ? "Salvando..." : "Salvar"}
               </button>
 
               <button
                 onClick={() => setIsHomologationModalOpen(true)}
                 disabled={isHomologating}
                 style={{ backgroundColor: "#006A55" }}
-                className="flex items-center gap-2 px-5 py-2 rounded-xl text-white text-xs font-bold shadow-md shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer disabled:opacity-50"
+                className="flex-1 sm:flex-initial flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-white text-xs font-bold shadow-md shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer disabled:opacity-50"
               >
-                <ShieldCheck className="w-4 h-4" />
-                Finalizar Validação e Homologar
+                <ShieldCheck className="w-4 h-4 shrink-0" />
+                <span>Homologar</span>
               </button>
             </>
           )}
@@ -658,21 +646,21 @@ export default function CuradoriaSessionPage() {
       </header>
 
       {/* ========================================================= */}
-      {/* CORPO SPLIT-VIEW (DUAS COLUNAS)                           */}
+      {/* CORPO SPLIT-VIEW (DUAS COLUNAS RESPONSIVAS)              */}
       {/* ========================================================= */}
-      <main className="flex-1 p-6 grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-7xl mx-auto w-full print:block print:p-0">
+      <main className="flex-1 p-4 sm:p-6 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 max-w-7xl mx-auto w-full print:block print:p-0">
         {/* ========================================================= */}
-        {/* COLUNA ESQUERDA: "ESPELHO DA VERDADE" (TRANSCRIÇÃO EDITÁVEL & ÁUDIO) */}
+        {/* COLUNA ESQUERDA: "ESPELHO DA VERDADE" (TRANSCRIÇÃO EDITÁVEL) */}
         {/* ========================================================= */}
         <section
           className={cn(
-            "bg-white/85 backdrop-blur-md border rounded-3xl p-6 shadow-xs flex flex-col h-full space-y-4 print:hidden transition-all",
+            "bg-white/85 backdrop-blur-md border rounded-3xl p-4 sm:p-6 shadow-xs flex flex-col space-y-4 print:hidden transition-all",
             isTranscriptionEdited
               ? "border-[#D32F2F] shadow-sm shadow-[#D32F2F]/10 ring-1 ring-[#D32F2F]/20"
               : "border-slate-200/90"
           )}
         >
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <div
                 style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
@@ -684,7 +672,7 @@ export default function CuradoriaSessionPage() {
                 <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
                   Espelho da Verdade
                 </h2>
-                <p className="text-[11px] text-slate-500">Transcrição literal integral (Whisper &bull; Editável)</p>
+                <p className="text-[11px] text-slate-500">Transcrição literal integral (Whisper Large v3)</p>
               </div>
             </div>
 
@@ -696,14 +684,14 @@ export default function CuradoriaSessionPage() {
                     className="text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded border border-[#D32F2F]/20 flex items-center gap-1"
                   >
                     <Edit3 className="w-2.5 h-2.5" />
-                    Transcrição Editada
+                    Editado
                   </span>
 
                   {session.status !== "validado" && (
                     <button
                       type="button"
                       onClick={handleRevertTranscription}
-                      title="Restaurar áudio original do Whisper"
+                      title="Restaurar áudio original"
                       className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-100 transition-colors cursor-pointer"
                     >
                       <RotateCcw className="w-2.5 h-2.5" />
@@ -714,7 +702,7 @@ export default function CuradoriaSessionPage() {
               ) : (
                 <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-500 bg-slate-100 px-2 py-1 rounded-lg">
                   <Lock className="w-3 h-3 text-[#006A55]" />
-                  Base Auditável
+                  Auditável
                 </div>
               )}
             </div>
@@ -722,7 +710,7 @@ export default function CuradoriaSessionPage() {
 
           {/* Player de Áudio Auditável ou Tag de Purga LGPD */}
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2">
-            <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center justify-between text-xs flex-wrap gap-1">
               <span className="font-bold text-slate-700 flex items-center gap-1.5">
                 <Volume2 className="w-3.5 h-3.5 text-[#006A55]" />
                 Áudio de Referência Clínica
@@ -730,12 +718,12 @@ export default function CuradoriaSessionPage() {
 
               {session.audio_storage_path ? (
                 <span className="text-[10px] text-amber-800 bg-amber-100 font-semibold px-2 py-0.5 rounded">
-                  Pendente de Purga na Homologação
+                  Pendente de Purga
                 </span>
               ) : (
                 <span className="text-[10px] text-emerald-800 bg-emerald-100 font-bold px-2 py-0.5 rounded flex items-center gap-1">
                   <ShieldCheck className="w-3 h-3 text-[#006A55]" />
-                  Áudio Purgado Definitivamente (LGPD)
+                  Áudio Purgado (LGPD)
                 </span>
               )}
             </div>
@@ -749,24 +737,23 @@ export default function CuradoriaSessionPage() {
                   </audio>
                 ) : (
                   <div className="text-[11px] text-slate-500 italic py-1">
-                    Arquivo de áudio protegido no Storage &bull; Carregando player seguro...
+                    Carregando player seguro do Storage...
                   </div>
                 )}
               </div>
             ) : (
               <p className="text-[11px] text-slate-500 leading-relaxed">
-                O arquivo físico de áudio original foi permanentemente excluído do armazenamento em estrita conformidade com as
-                resoluções do CEP/UFRN e a LGPD. Apenas a transcrição e o relatório homologado foram preservados.
+                O arquivo de áudio foi purgado definitivamente em conformidade com as resoluções do CEP/UFRN e a LGPD.
               </p>
             )}
           </div>
 
           {/* Área Editável de Transcrição Literal */}
-          <div className="flex-1 flex flex-col space-y-2">
-            <div className="flex items-center justify-between">
+          <div className="flex-1 flex flex-col space-y-2 min-h-[260px]">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                 <Edit3 className="w-3 h-3 text-slate-400" />
-                Texto Transcrito (Edite diretamente se necessário):
+                Texto Transcrito:
               </label>
 
               {isTranscriptionEdited && session.status !== "validado" && (
@@ -788,7 +775,7 @@ export default function CuradoriaSessionPage() {
               disabled={session.status === "validado"}
               onChange={(e) => setRawTranscription(e.target.value)}
               placeholder="Nenhuma transcrição disponível ou insira a transcrição da sessão..."
-              className="w-full flex-1 min-h-[300px] bg-slate-50/70 hover:bg-slate-50 focus:bg-white border border-slate-200/80 focus:border-[#006A55] rounded-2xl p-4 text-xs text-slate-900 leading-relaxed resize-none focus:outline-none transition-all font-sans custom-scrollbar"
+              className="w-full flex-1 min-h-[220px] bg-slate-50/70 hover:bg-slate-50 focus:bg-white border border-slate-200/80 focus:border-[#006A55] rounded-2xl p-4 text-xs text-slate-900 leading-relaxed resize-none focus:outline-none transition-all font-sans custom-scrollbar"
             />
           </div>
         </section>
@@ -796,8 +783,8 @@ export default function CuradoriaSessionPage() {
         {/* ========================================================= */}
         {/* COLUNA DIREITA: "RELATÓRIO ESTRUTURADO" (CAMPOS EDITÁVEIS)*/}
         {/* ========================================================= */}
-        <section className="bg-white/85 backdrop-blur-md border border-slate-200/90 rounded-3xl p-6 shadow-xs flex flex-col h-full space-y-4 print:border-none print:shadow-none print:p-0">
-          <div className="flex items-center justify-between border-b border-slate-100 pb-3 print:hidden">
+        <section className="bg-white/85 backdrop-blur-md border border-slate-200/90 rounded-3xl p-4 sm:p-6 shadow-xs flex flex-col space-y-4 print:border-none print:shadow-none print:p-0">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 print:hidden flex-wrap gap-2">
             <div className="flex items-center gap-2.5">
               <div
                 style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
@@ -807,10 +794,10 @@ export default function CuradoriaSessionPage() {
               </div>
               <div>
                 <h2 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
-                  Relatório Analítico Estruturado
+                  Relatório Estruturado (SOAP)
                 </h2>
                 <p className="text-[11px] text-slate-500">
-                  Gerado por Gemini &bull; Editável com rastreamento auditável
+                  Gerado por IA &bull; Rastreamento auditável de alterações
                 </p>
               </div>
             </div>
@@ -821,7 +808,7 @@ export default function CuradoriaSessionPage() {
                 className="text-[10px] font-bold px-2.5 py-1 rounded-lg border border-[#D32F2F]/30 flex items-center gap-1.5 shadow-2xs"
               >
                 <Edit3 className="w-3 h-3 text-[#D32F2F]" />
-                {editedFields.size} seção(ões) modificada(s) manualmente
+                {editedFields.size} campo(s) alterado(s)
               </div>
             )}
           </div>
@@ -837,7 +824,7 @@ export default function CuradoriaSessionPage() {
           </div>
 
           {/* Lista de Campos da Nota Clínica com Rastreamento Visual */}
-          <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1 print:overflow-visible print:space-y-4">
+          <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-1 print:overflow-visible print:space-y-4 max-h-[600px]">
             {sortedFields.length === 0 ? (
               <div className="text-center py-12 text-slate-400 text-xs">
                 Nenhuma seção clínica disponível no momento.
@@ -850,13 +837,13 @@ export default function CuradoriaSessionPage() {
                   <div
                     key={sectionKey}
                     className={cn(
-                      "p-4 rounded-2xl border transition-all relative bg-white print:border-slate-300 print:p-3",
+                      "p-3.5 sm:p-4 rounded-2xl border transition-all relative bg-white print:border-slate-300 print:p-3",
                       isEdited
                         ? "border-[#D32F2F] shadow-sm shadow-[#D32F2F]/10 ring-1 ring-[#D32F2F]/20"
                         : "border-slate-200/90 hover:border-slate-300"
                     )}
                   >
-                    <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center justify-between mb-2 flex-wrap gap-1">
                       <label className="text-xs font-bold text-slate-800 tracking-tight flex items-center gap-1.5">
                         <span>{sectionKey}</span>
                       </label>
@@ -876,11 +863,11 @@ export default function CuradoriaSessionPage() {
                               <button
                                 type="button"
                                 onClick={() => handleRevertField(sectionKey)}
-                                title="Restaurar versão original sugerida pela IA"
+                                title="Restaurar versão sugerida pela IA"
                                 className="text-[10px] font-semibold text-slate-500 hover:text-slate-800 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-slate-100 transition-colors cursor-pointer"
                               >
                                 <RotateCcw className="w-2.5 h-2.5" />
-                                Reverter para IA
+                                Reverter
                               </button>
                             )}
                           </>
@@ -909,7 +896,7 @@ export default function CuradoriaSessionPage() {
       {/* ========================================================= */}
       {isHomologationModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200 print:hidden">
-          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-6 shadow-2xl relative text-left">
+          <div className="w-full max-w-lg bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 shadow-2xl relative text-left max-h-[90vh] overflow-y-auto custom-scrollbar">
             <button
               onClick={() => setIsHomologationModalOpen(false)}
               disabled={isHomologating}
@@ -930,7 +917,7 @@ export default function CuradoriaSessionPage() {
                   Homologar Nota Clínica e Purgar Áudio?
                 </h3>
                 <p className="text-xs text-slate-500">
-                  Confirmação de conformidade ética (CEP/UFRN & LGPD Saúde).
+                  Confirmação ética CEP/UFRN e LGPD Saúde.
                 </p>
               </div>
             </div>
@@ -954,7 +941,7 @@ export default function CuradoriaSessionPage() {
                 </span>
               </div>
               <div className="flex items-center justify-between text-slate-600">
-                <span>Seções editadas manualmente:</span>
+                <span>Campos editados:</span>
                 <span className="font-bold text-[#D32F2F]">
                   {editedFields.size + (isTranscriptionEdited ? 1 : 0)}
                 </span>
@@ -965,12 +952,12 @@ export default function CuradoriaSessionPage() {
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
+            <div className="flex flex-col-reverse sm:flex-row items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={() => setIsHomologationModalOpen(false)}
                 disabled={isHomologating}
-                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
@@ -980,7 +967,7 @@ export default function CuradoriaSessionPage() {
                 onClick={handleHomologate}
                 disabled={isHomologating}
                 style={{ backgroundColor: "#006A55" }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-bold shadow-md shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer disabled:opacity-60"
+                className="w-full sm:w-auto flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-white text-xs font-bold shadow-md shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer disabled:opacity-60"
               >
                 {isHomologating ? (
                   <>

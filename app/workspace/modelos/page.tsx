@@ -11,6 +11,7 @@ import {
   Layers,
   ArrowRight,
   Edit3,
+  Eye,
   Copy,
   Trash2,
   CheckCircle2,
@@ -26,6 +27,7 @@ import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { ImportTemplateModal } from "@/components/templates/ImportTemplateModal";
 import { TemplateReviewEditor } from "@/components/templates/TemplateReviewEditor";
+import { TemplatePreviewModal } from "@/components/templates/TemplatePreviewModal";
 import { ImportedReportTemplate } from "@/lib/report-template-schema";
 
 export default function ModelosPage() {
@@ -34,9 +36,11 @@ export default function ModelosPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Estados de Importação e Editor de Revisão
+  // Estados de Importação, Editor de Revisão e Modal de Visualização
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [reviewingTemplate, setReviewingTemplate] = useState<ImportedReportTemplate | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<ReportTemplateItem | null>(null);
+
   const [feedbackToast, setFeedbackToast] = useState<{
     type: "success" | "error";
     message: string;
@@ -45,7 +49,11 @@ export default function ModelosPage() {
   const loadTemplates = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.from("report_templates").select("*").order("created_at", { ascending: true });
+      const { data, error } = await supabase
+        .from("report_templates")
+        .select("*")
+        .order("created_at", { ascending: true });
+
       if (data && data.length > 0) {
         const formatted: ReportTemplateItem[] = data.map((d: any) => ({
           id: d.id,
@@ -299,16 +307,29 @@ export default function ModelosPage() {
                       </div>
                     </div>
 
+                    {/* Botões de Ação do Card */}
                     <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                      {/* Botão Visualizar Modelo */}
+                      <button
+                        type="button"
+                        onClick={() => setPreviewTemplate(template)}
+                        style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold border border-[#006A55]/20 hover:bg-[#006A55] hover:text-white transition-all cursor-pointer shadow-2xs"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Visualizar</span>
+                      </button>
+
+                      {/* Botão Editar Template */}
                       <Link
                         href={`/workspace/modelos/${template.id}`}
-                        style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-bold border border-[#006A55]/20 hover:bg-[#006A55] hover:text-white transition-all cursor-pointer shadow-2xs"
+                        className="flex-1 flex items-center justify-center gap-1.5 py-2 px-2.5 rounded-xl text-xs font-bold bg-slate-100 hover:bg-slate-200 text-slate-700 transition-all cursor-pointer border border-slate-200/80"
                       >
                         <Edit3 className="w-3.5 h-3.5" />
-                        <span>Editar Template</span>
+                        <span>Editar</span>
                       </Link>
 
+                      {/* Botão Excluir */}
                       <button
                         type="button"
                         onClick={() => handleDeleteTemplate(template.id, template.title)}
@@ -331,6 +352,13 @@ export default function ModelosPage() {
         isOpen={isImportModalOpen}
         onClose={() => setIsImportModalOpen(false)}
         onTemplateImported={handleTemplateImported}
+      />
+
+      {/* Modal de Visualização Representativa do Relatório */}
+      <TemplatePreviewModal
+        isOpen={!!previewTemplate}
+        onClose={() => setPreviewTemplate(null)}
+        template={previewTemplate}
       />
     </div>
   );

@@ -3,6 +3,7 @@
 import React from "react";
 import { WorkspaceHeader } from "@/components/workspace-header";
 import { EscaladaCard } from "@/components/partners/EscaladaCard";
+import { EixoAcademicoCard } from "@/components/partners/EixoAcademicoCard";
 import { ShieldCheck, Award, ExternalLink } from "lucide-react";
 
 export default function ParceirosPage() {
@@ -37,9 +38,14 @@ export default function ParceirosPage() {
           </div>
         </div>
 
-        {/* Card do Projeto de Escalada na UFRN */}
+        {/* 1. Card do Projeto de Escalada na UFRN */}
         <section className="space-y-4">
           <EscaladaCard />
+        </section>
+
+        {/* 2. Card do Eixo Acadêmico: Universidade, Ensino & Extensão */}
+        <section className="space-y-4">
+          <EixoAcademicoCard />
         </section>
       </main>
     </div>

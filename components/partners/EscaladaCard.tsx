@@ -97,37 +97,49 @@ export function EscaladaCard({ className }: EscaladaCardProps) {
             Iniciativa pioneira do Departamento de Educação Física (DEF/CCS) e do Complexo de Esportes e Eventos (COESPE/UFRN) que disponibiliza à comunidade um espaço público de prática indoor de bouldering, integrando formação esportiva, convivência e inclusão.
           </p>
 
-          {/* Seção: Idealização & Coordenação do Projeto */}
-          <div className="space-y-2.5 pt-2">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-              Idealização & Coordenação do Projeto:
-            </div>
-
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Card Coordenador: Hassan Mohamed Elsangedy */}
-              <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
-                <div className="w-7 h-7 rounded-full overflow-hidden border border-amber-300 relative bg-amber-100 flex items-center justify-center shrink-0">
-                  <Image
-                    src="/images/hassan-avatar.png"
-                    alt="Hassan Mohamed Elsangedy"
-                    width={28}
-                    height={28}
-                    className="object-cover w-full h-full"
-                  />
+          {/* Seção: Equipe do Projeto (Idealização, Coordenação e Colaboração) */}
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-wrap items-center gap-6">
+              {/* Idealização & Coordenação */}
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Idealização & Coordenação:
                 </div>
-                <span className="text-xs font-bold text-slate-800">
-                  Hassan Mohamed Elsangedy
-                </span>
+                <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
+                  <div className="w-7 h-7 rounded-full overflow-hidden border border-amber-300 relative bg-amber-100 flex items-center justify-center shrink-0">
+                    <Image
+                      src="/images/hassan-avatar.png"
+                      alt="Hassan Mohamed Elsangedy"
+                      width={28}
+                      height={28}
+                      className="object-cover w-full h-full"
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-slate-800">
+                    Hassan Mohamed Elsangedy
+                  </span>
+                </div>
               </div>
 
-              {/* Card Coordenador: Cheng Chao */}
-              <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
-                <div className="w-7 h-7 rounded-full bg-[#4A2612] text-white flex items-center justify-center text-xs font-bold shrink-0">
-                  C
+              {/* Colaborador */}
+              <div className="space-y-1.5">
+                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  Colaborador:
                 </div>
-                <span className="text-xs font-bold text-slate-800">
-                  Cheng Chao
-                </span>
+                <a
+                  href="https://webpsicofisio.vercel.app/#equipe/cheng-chao"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-amber-200/90 hover:border-amber-400 hover:bg-amber-50/50 shadow-2xs transition-all cursor-pointer group"
+                >
+                  <div className="w-7 h-7 rounded-full bg-[#4A2612] text-white flex items-center justify-center text-xs font-bold shrink-0">
+                    C
+                  </div>
+                  <span className="text-xs font-bold text-slate-800 group-hover:text-[#963E1B] transition-colors">
+                    Cheng Chao
+                  </span>
+                  <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#963E1B] transition-colors" />
+                </a>
               </div>
             </div>
           </div>

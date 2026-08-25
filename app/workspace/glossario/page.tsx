@@ -135,11 +135,15 @@ export default function GlossarioClinicoPage() {
 
     try {
       // Persist to Supabase
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id || null;
+
       const { data, error } = await supabase.from("clinical_glossary").insert([
         {
           is_correction: isCorrection,
           heard_term: isCorrection ? heardTerm.trim() : null,
           written_term: writtenTerm.trim(),
+          created_by: currentUserId,
         },
       ]).select();
 

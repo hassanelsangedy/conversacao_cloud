@@ -250,7 +250,7 @@ export default function CuradoriaSessionPage() {
             pollTimeout = setTimeout(loadSession, 1500);
             return;
           } else {
-            setErrorMessage("Sessão não encontrada.");
+            setErrorMessage("Sessão não encontrada ou você não possui permissão de acesso a este registro conforme diretrizes de privacidade e grupo ético.");
             setSession(null);
             setLoading(false);
             return;

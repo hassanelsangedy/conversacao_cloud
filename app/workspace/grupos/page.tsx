@@ -97,12 +97,12 @@ export default function GruposPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  // 1. Carrega Grupos e Participantes do Supabase
+  // 1. Carrega Grupos, Profissionais e Participantes do Supabase
   const loadData = async () => {
     try {
       setLoading(true);
 
-      // Busca Grupos
+      // Busca Grupos (RLS filtra automaticamente por created_by ou membership)
       const { data: grpData, error: grpErr } = await supabase
         .from("research_groups")
         .select("*")
@@ -110,7 +110,12 @@ export default function GruposPage() {
 
       if (grpErr) throw grpErr;
 
-      // Busca Participantes
+      // Busca Profissionais cadastrados nos grupos
+      const { data: profData } = await supabase
+        .from("group_professionals")
+        .select("*");
+
+      // Busca Participantes vinculados aos grupos
       const { data: partData, error: partErr } = await supabase
         .from("participants")
         .select("*")
@@ -118,19 +123,14 @@ export default function GruposPage() {
 
       if (partErr) throw partErr;
 
-      // Busca Profissionais dos Grupos
-      const { data: profData } = await supabase
-        .from("group_professionals")
-        .select("*");
-
       const mappedGroups: ResearchGroupItem[] = (grpData || []).map((g: any) => {
         const groupParticipants = (partData || []).filter((p: any) => p.group_id === g.id);
-        const groupProf: ProfessionalMember[] = (profData || [])
-          .filter((p: any) => p.group_id === g.id)
-          .map((p: any) => ({
-            name: p.name || p.email,
-            email: p.email,
-            role: p.role || "colaborador",
+        const groupProfs: ProfessionalMember[] = (profData || [])
+          .filter((pr: any) => pr.group_id === g.id)
+          .map((pr: any) => ({
+            name: pr.name || "Profissional",
+            email: pr.email || "",
+            role: (pr.role as any) || "colaborador",
           }));
 
         return {
@@ -140,7 +140,7 @@ export default function GruposPage() {
           ethics_approval_date: g.ethics_approval_date || "2026-03-15",
           tcle_file_name: g.tcle_file_path ? "TCLE_Aprovado_CEP.pdf" : undefined,
           tcle_file_path: g.tcle_file_path,
-          professionals: groupProf.length > 0 ? groupProf : DEFAULT_PROFESSIONALS,
+          professionals: groupProfs.length > 0 ? groupProfs : DEFAULT_PROFESSIONALS,
           participants: groupParticipants,
           created_at: g.created_at || new Date().toISOString(),
         };
@@ -211,7 +211,7 @@ export default function GruposPage() {
     setIsSubmitting(true);
     try {
       const { data: authData } = await supabase.auth.getUser();
-      const currentUserId = authData?.user?.id;
+      const currentUserId = authData?.user?.id || null;
 
       let tclePath: string | null = null;
       if (tcleFile) {
@@ -224,7 +224,7 @@ export default function GruposPage() {
         tclePath = uploadData?.path || `tcle-docs/${fileName}`;
       }
 
-      let targetGroupId = editingGroupId;
+      let activeGroupId = editingGroupId;
 
       if (editingGroupId) {
         // Atualizar
@@ -241,48 +241,44 @@ export default function GruposPage() {
           .eq("id", editingGroupId);
 
         if (error) throw error;
-
-        setToastMessage({
-          type: "success",
-          text: `Grupo "${groupName}" atualizado com sucesso!`,
-        });
       } else {
         // Criar Novo
-        targetGroupId = crypto.randomUUID();
+        const newId = crypto.randomUUID();
+        activeGroupId = newId;
+
         const { error } = await supabase.from("research_groups").insert({
-          id: targetGroupId,
+          id: newId,
           name: groupName,
           caae_number: caaeNumber,
           ethics_approval_date: approvalDate || null,
           tcle_file_path: tclePath,
-          created_by: currentUserId || null,
+          created_by: currentUserId,
         });
 
         if (error) throw error;
-
-        setToastMessage({
-          type: "success",
-          text: `Grupo "${groupName}" criado com sucesso!`,
-        });
       }
 
-      // Sincroniza os profissionais vinculados ao grupo
-      if (targetGroupId) {
-        await supabase.from("group_professionals").delete().eq("group_id", targetGroupId);
+      // Sincroniza a equipe de profissionais no banco
+      if (activeGroupId) {
+        await supabase.from("group_professionals").delete().eq("group_id", activeGroupId);
 
-        const validProfessionals = professionalsList
-          .filter((p) => p.email.trim().length > 0)
-          .map((p) => ({
-            group_id: targetGroupId,
-            name: p.name.trim() || p.email.trim(),
+        const validProfs = professionalsList.filter((p) => p.email.trim().length > 0);
+        if (validProfs.length > 0) {
+          const insertProfs = validProfs.map((p) => ({
+            group_id: activeGroupId,
+            name: p.name.trim() || p.email.split("@")[0],
             email: p.email.trim().toLowerCase(),
             role: p.role,
           }));
 
-        if (validProfessionals.length > 0) {
-          await supabase.from("group_professionals").insert(validProfessionals);
+          await supabase.from("group_professionals").insert(insertProfs);
         }
       }
+
+      setToastMessage({
+        type: "success",
+        text: editingGroupId ? `Grupo "${groupName}" atualizado!` : `Grupo "${groupName}" criado com sucesso!`,
+      });
 
       setIsGroupModalOpen(false);
       await loadData();
@@ -340,8 +336,7 @@ export default function GruposPage() {
     setIsSubmitting(true);
     try {
       const { data: authData } = await supabase.auth.getUser();
-      const currentUserId = authData?.user?.id;
-
+      const currentUserId = authData?.user?.id || null;
       const generatedId = `PAC-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const { data, error } = await supabase
@@ -356,7 +351,7 @@ export default function GruposPage() {
           group_id: targetGroupIdForParticipant,
           prontuario_pep: newPartPep || null,
           tcle_accepted: newPartTcle,
-          created_by: currentUserId || null,
+          created_by: currentUserId,
         })
         .select()
         .single();

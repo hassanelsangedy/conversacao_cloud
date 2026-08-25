@@ -46,12 +46,12 @@ export async function POST(request: NextRequest) {
       nature = (formData.get("nature") as string) || nature;
       deviceId = (formData.get("deviceId") as string) || deviceId;
       sessionId = (formData.get("sessionId") as string) || null;
-      userId = (formData.get("userId") as string) || null;
+      userId = (formData.get("userId") as string) || (formData.get("createdBy") as string) || null;
     } else {
       const body = await request.json().catch(() => ({}));
       sessionId = body.sessionId || null;
       advisorNotes = body.advisorNotes || "";
-      userId = body.userId || null;
+      userId = body.userId || body.createdBy || null;
     }
 
     // 2. Inicializa cliente Supabase
@@ -71,6 +71,7 @@ export async function POST(request: NextRequest) {
     const validGroupId = isUuid(groupId) ? groupId : DEFAULT_GROUP_ID;
     const validTemplateId = isUuid(templateId) ? templateId : DEFAULT_TEMPLATE_ID;
     const validParticipantId = isUuid(participantId) ? participantId : DEFAULT_PARTICIPANT_ID;
+    const validUserId = isUuid(userId) ? userId : null;
 
     if (!sessionId) {
       sessionId = crypto.randomUUID();
@@ -98,7 +99,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 4. Cria o registro na tabela `sessions` com status 'processando'
-    const { error: dbErr } = await supabase.from("sessions").upsert({
+    const sessionPayload: any = {
       id: sessionId,
       session_title: sessionTitle,
       audio_input_device: deviceId,
@@ -110,8 +111,12 @@ export async function POST(request: NextRequest) {
       participant_id: validParticipantId,
       advisor_notes: advisorNotes || null,
       nature: nature,
-      created_by: userId,
-    });
+    };
+    if (validUserId) {
+      sessionPayload.created_by = validUserId;
+    }
+
+    const { error: dbErr } = await supabase.from("sessions").upsert(sessionPayload);
 
     if (dbErr) {
       console.error("[PIPELINE ERROR] Erro no banco:", dbErr.message);

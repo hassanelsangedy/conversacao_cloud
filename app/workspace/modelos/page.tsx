@@ -91,12 +91,12 @@ export default function ModelosPage() {
   const handleSaveImportedTemplate = async (saved: ImportedReportTemplate) => {
     try {
       const { data: authData } = await supabase.auth.getUser();
-      const currentUserId = authData?.user?.id;
+      const currentUserId = authData?.user?.id || null;
 
       const res = await fetch("/api/templates/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...saved, userId: currentUserId }),
+        body: JSON.stringify({ ...saved, createdBy: currentUserId }),
       });
 
       const data = await res.json();

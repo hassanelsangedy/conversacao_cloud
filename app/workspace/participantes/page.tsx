@@ -232,10 +232,9 @@ export default function ParticipantesPage() {
         });
       } else {
         // Novo Cadastro
-        const { data: authData } = await supabase.auth.getUser();
-        const currentUserId = authData?.user?.id;
-
         const generatedId = `PAC-${Math.floor(1000 + Math.random() * 9000)}`;
+        const { data: authData } = await supabase.auth.getUser();
+        const currentUserId = authData?.user?.id || null;
 
         const { error } = await supabase.from("participants").insert({
           auto_id: generatedId,
@@ -248,7 +247,7 @@ export default function ParticipantesPage() {
           prontuario_pep: prontuarioPep || null,
           tcle_accepted: tcleAccepted,
           metadata: metadataPayload,
-          created_by: currentUserId || null,
+          created_by: currentUserId,
         });
 
         if (error) throw error;

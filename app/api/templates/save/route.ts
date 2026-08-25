@@ -52,20 +52,25 @@ export async function POST(request: NextRequest) {
       fields: sec.fields || [],
     }));
 
-    const userId = (template as any).userId || null;
+    const createdByRaw = (template as any).createdBy || (template as any).created_by;
+    const finalCreatedBy = isValidUUID(createdByRaw) ? createdByRaw : null;
+
+    const templatePayload: any = {
+      id: finalTemplateId,
+      title: template.title.trim(),
+      description: template.description || "Modelo de relatório clínico estruturado por IA.",
+      detail_level: finalDetail,
+      tone_style: finalTone,
+      sections: formattedSections,
+      is_system: false,
+    };
+    if (finalCreatedBy) {
+      templatePayload.created_by = finalCreatedBy;
+    }
 
     const { data, error } = await supabase
       .from("report_templates")
-      .upsert({
-        id: finalTemplateId,
-        title: template.title.trim(),
-        description: template.description || "Modelo de relatório clínico estruturado por IA.",
-        detail_level: finalDetail,
-        tone_style: finalTone,
-        sections: formattedSections,
-        created_by: userId,
-        is_system: false,
-      })
+      .upsert(templatePayload)
       .select()
       .single();
 

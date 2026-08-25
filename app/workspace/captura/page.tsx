@@ -27,6 +27,8 @@ import {
   BookOpen,
   Check,
   Menu,
+  User,
+  LogOut,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
@@ -171,10 +173,17 @@ export default function CapturaCentralPage() {
   const [newPatientGender, setNewPatientGender] = useState<"masculino" | "feminino" | "neutro">("feminino");
   const [newPatientTcle, setNewPatientTcle] = useState(true);
   const [isCreatingPatient, setIsCreatingPatient] = useState(false);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
 
   // 1. Carrega dados do Supabase
   const loadInitialData = async () => {
     try {
+      // Carrega usuário autenticado
+      const { data: authData } = await supabase.auth.getUser();
+      if (authData?.user?.email) {
+        setUserEmail(authData.user.email);
+      }
+
       const { data: partData } = await supabase
         .from("participants")
         .select("*")
@@ -204,6 +213,15 @@ export default function CapturaCentralPage() {
     } catch (err) {
       console.warn("[Captura] Erro no carregamento inicial:", err);
     }
+  };
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore
+    }
+    window.location.replace("/login");
   };
 
   const fetchHistory = async () => {
@@ -765,9 +783,9 @@ export default function CapturaCentralPage() {
         )}
       </div>
 
-      {/* Parte Inferior Fixa da Sidebar: Os 3 Botões de Navegação + Card Ético */}
+      {/* Parte Inferior Fixa da Sidebar: Navegação dos Módulos + Rodapé Dedicado do Usuário */}
       <div className="p-3 bg-slate-50/90 border-t border-slate-200/80 space-y-2.5 shrink-0">
-        {/* Os Três Botões Fixos na Base */}
+        {/* Botões de Navegação: Participantes, Grupos, Glossário, Relatórios */}
         <nav className="space-y-1">
           {bottomNavLinks.map((item) => {
             const Icon = item.icon;
@@ -791,17 +809,36 @@ export default function CapturaCentralPage() {
           })}
         </nav>
 
-        {/* Card Institucional Lab. Linguagem & Cognição / CAAE */}
-        <div className="flex items-center gap-2.5 p-2 rounded-xl bg-white border border-slate-200 shadow-2xs">
-          <div className="w-7 h-7 rounded-full bg-emerald-50 border border-emerald-200 flex items-center justify-center shrink-0">
-            <ShieldCheck className="w-4 h-4 text-[#006A55]" />
-          </div>
-          <div className="overflow-hidden">
-            <div className="text-[11px] font-bold text-slate-800 truncate">Lab. Linguagem & Cognição</div>
-            <div className="text-[10px] text-slate-500 flex items-center gap-1">
-              <span>CAAE:</span>
-              <span className="font-mono text-[9px] text-[#006A55] font-semibold">58291022.4.0000.5537</span>
+        {/* Rodapé Dedicado com Usuário Logado e Botão Sair da Conta */}
+        <div className="pt-2 border-t border-slate-200/70">
+          <div className="flex items-center justify-between gap-2 p-2.5 rounded-2xl bg-white border border-slate-200/90 shadow-2xs">
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              <div
+                style={{ backgroundColor: "rgba(0, 106, 85, 0.1)", color: "#006A55" }}
+                className="w-8 h-8 rounded-xl flex items-center justify-center font-bold shrink-0 border border-[#006A55]/20 shadow-2xs"
+              >
+                <User className="w-4 h-4 text-[#006A55]" />
+              </div>
+              <div className="overflow-hidden">
+                <div className="text-[11px] font-bold text-slate-800 truncate max-w-[130px]" title={userEmail || "Conectado"}>
+                  {userEmail || "Usuário Conectado"}
+                </div>
+                <div className="text-[10px] text-[#006A55] font-semibold flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#006A55] animate-pulse"></span>
+                  <span>Sessão Ativa</span>
+                </div>
+              </div>
             </div>
+
+            <button
+              type="button"
+              onClick={handleSignOut}
+              title="Encerrar sessão e sair da conta"
+              className="flex items-center gap-1 px-2 py-1.5 text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-transparent hover:border-rose-200 transition-colors cursor-pointer shrink-0"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span className="text-[10px] font-bold hidden sm:inline">Sair</span>
+            </button>
           </div>
         </div>
       </div>

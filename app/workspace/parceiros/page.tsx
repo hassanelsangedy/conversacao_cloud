@@ -4,6 +4,7 @@ import React from "react";
 import { WorkspaceHeader } from "@/components/workspace-header";
 import { EscaladaCard } from "@/components/partners/EscaladaCard";
 import { EixoAcademicoCard } from "@/components/partners/EixoAcademicoCard";
+import { ImpactoFestivalCard } from "@/components/partners/ImpactoFestivalCard";
 import { ShieldCheck, Award, ExternalLink } from "lucide-react";
 
 export default function ParceirosPage() {
@@ -43,7 +44,12 @@ export default function ParceirosPage() {
           <EscaladaCard />
         </section>
 
-        {/* 2. Card do Eixo Acadêmico: Universidade, Ensino & Extensão */}
+        {/* 2. Card do Impacto Comprovado: Alcance do Festival em Números */}
+        <section className="space-y-4">
+          <ImpactoFestivalCard />
+        </section>
+
+        {/* 3. Card do Eixo Acadêmico: Universidade, Ensino & Extensão */}
         <section className="space-y-4">
           <EixoAcademicoCard />
         </section>

@@ -4,6 +4,11 @@ import { ImportedReportTemplate } from "@/lib/report-template-schema";
 
 export const maxDuration = 30;
 
+function isValidUUID(str?: string): boolean {
+  if (!str) return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+}
+
 export async function POST(request: NextRequest) {
   try {
     const template: ImportedReportTemplate = await request.json();
@@ -22,26 +27,40 @@ export async function POST(request: NextRequest) {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
-    const newTemplateId = template.id || crypto.randomUUID();
+    const finalTemplateId = isValidUUID(template.id) ? template.id! : crypto.randomUUID();
 
-    // Prepara as seções em JSONB compatível com o schema do Conversação Cloud
-    const sectionsJson = {
-      items: template.sections || [],
-      visualAssets: template.visualAssets || [],
-      totalPages: template.totalPages || 1,
-      category: template.category || "Geral",
-      extractedFrom: template.extractedFrom || null,
-    };
+    // Normaliza tone_style e detail_level para compatibilidade total com o banco
+    const allowedTones = ["clinico", "narrativo", "juvenil", "academico", "institucional", "formal"];
+    let finalTone = template.toneStyle?.toLowerCase() || "clinico";
+    if (!allowedTones.includes(finalTone)) {
+      finalTone = "clinico";
+    }
+
+    const allowedDetails = ["conciso", "equilibrio", "detalhado"];
+    let finalDetail = template.detailLevel?.toLowerCase() || "equilibrio";
+    if (!allowedDetails.includes(finalDetail)) {
+      finalDetail = "equilibrio";
+    }
+
+    // Formata as seções para serem compatíveis com todas as telas do Conversação Cloud
+    const formattedSections = (template.sections || []).map((sec) => ({
+      title: sec.title,
+      description: sec.description || `Instruções para ${sec.title}`,
+      format: sec.layoutType === "table" ? "topicos" : "paragrafos",
+      pageNumber: sec.pageNumber || 1,
+      fixedText: sec.fixedText || "",
+      fields: sec.fields || [],
+    }));
 
     const { data, error } = await supabase
       .from("report_templates")
       .upsert({
-        id: newTemplateId,
-        title: template.title,
-        description: template.description || "Modelo estruturado importado via IA.",
-        detail_level: template.detailLevel || "equilibrio",
-        tone_style: template.toneStyle || "clinico",
-        sections: sectionsJson,
+        id: finalTemplateId,
+        title: template.title.trim(),
+        description: template.description || "Modelo de relatório clínico estruturado por IA.",
+        detail_level: finalDetail,
+        tone_style: finalTone,
+        sections: formattedSections,
       })
       .select()
       .single();

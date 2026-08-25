@@ -90,7 +90,7 @@ export default function ModelosPage() {
 
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Erro ao salvar modelo no banco.");
+        throw new Error(data.details || data.error || "Erro ao salvar modelo no banco.");
       }
 
       setFeedbackToast({

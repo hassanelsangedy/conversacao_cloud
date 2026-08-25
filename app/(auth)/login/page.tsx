@@ -27,7 +27,7 @@ export default function LoginPage() {
         const { data, error } = await supabase.auth.signInWithOtp({
           email: email.trim(),
           options: {
-            emailRedirectTo: `${window.location.origin}/workspace`,
+            emailRedirectTo: `${window.location.origin}/workspace/captura`,
           },
         });
         if (error) {
@@ -49,14 +49,14 @@ export default function LoginPage() {
         }
 
         if (data?.user) {
-          window.location.replace('/workspace');
+          window.location.replace('/workspace/captura');
         }
       } else {
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: `${window.location.origin}/workspace`,
+            emailRedirectTo: `${window.location.origin}/workspace/captura`,
           },
         });
         if (error) {

@@ -30,6 +30,7 @@ import {
 import { WorkspaceHeader } from "@/components/workspace-header";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { InviteMemberModal } from "@/components/groups/InviteMemberModal";
 
 interface ProfessionalMember {
   email: string;
@@ -93,6 +94,10 @@ export default function GruposPage() {
   const [newPartGender, setNewPartGender] = useState<"masculino" | "feminino" | "neutro">("feminino");
   const [newPartPep, setNewPartPep] = useState("");
   const [newPartTcle, setNewPartTcle] = useState(true);
+
+  // Modal Convidar Membro / Link de Convite
+  const [isInviteModalOpen, setIsInviteModalOpen] = useState(false);
+  const [inviteDefaultGroupId, setInviteDefaultGroupId] = useState<string>("");
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -438,14 +443,28 @@ export default function GruposPage() {
             </p>
           </div>
 
-          <button
-            onClick={handleOpenNewGroupModal}
-            style={{ backgroundColor: "#006A55" }}
-            className="flex items-center gap-2 px-5 py-3 rounded-2xl text-white text-xs font-bold shadow-lg shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer whitespace-nowrap"
-          >
-            <Plus className="w-4 h-4" />
-            Criar Novo Grupo
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => {
+                setInviteDefaultGroupId(groups[0]?.id || "");
+                setIsInviteModalOpen(true);
+              }}
+              style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
+              className="flex items-center gap-2 px-4 py-3 rounded-2xl text-xs font-bold border border-[#006A55]/20 hover:bg-[#006A55] hover:text-white transition-all cursor-pointer whitespace-nowrap shadow-2xs"
+            >
+              <Mail className="w-4 h-4" />
+              Convidar Membro / Gerar Link
+            </button>
+
+            <button
+              onClick={handleOpenNewGroupModal}
+              style={{ backgroundColor: "#006A55" }}
+              className="flex items-center gap-2 px-5 py-3 rounded-2xl text-white text-xs font-bold shadow-lg shadow-[#006A55]/20 hover:opacity-90 active:scale-98 transition-all cursor-pointer whitespace-nowrap"
+            >
+              <Plus className="w-4 h-4" />
+              Criar Novo Grupo
+            </button>
+          </div>
         </div>
 
         {/* Busca */}
@@ -526,6 +545,19 @@ export default function GruposPage() {
 
                     {/* Botões de Ação do Grupo */}
                     <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          setInviteDefaultGroupId(g.id);
+                          setIsInviteModalOpen(true);
+                        }}
+                        style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border border-[#006A55]/20 hover:bg-[#006A55] hover:text-white transition-all cursor-pointer shadow-2xs"
+                        title="Convidar Novo Membro para este grupo"
+                      >
+                        <Mail className="w-3.5 h-3.5" />
+                        <span>Convidar</span>
+                      </button>
+
                       <button
                         onClick={() => handleOpenAddParticipantToGroup(g.id)}
                         style={{ backgroundColor: "rgba(0, 106, 85, 0.08)", color: "#006A55" }}
@@ -667,7 +699,25 @@ export default function GruposPage() {
 
                   {/* Conteúdo da Aba 2: Equipe de Profissionais */}
                   {activeTab === "equipe" && (
-                    <div className="space-y-2">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-slate-700">
+                          Membros e Pesquisadores Vinculados ({g.professionals.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setInviteDefaultGroupId(g.id);
+                            setIsInviteModalOpen(true);
+                          }}
+                          style={{ color: "#006A55" }}
+                          className="text-xs font-bold hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          Gerar Link de Convite
+                        </button>
+                      </div>
+
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {g.professionals.map((prof, idx) => (
                           <div
@@ -1015,6 +1065,14 @@ export default function GruposPage() {
           </div>
         </div>
       )}
+
+      {/* Modal Convidar Membro / Gerar Link de Convite */}
+      <InviteMemberModal
+        isOpen={isInviteModalOpen}
+        onClose={() => setIsInviteModalOpen(false)}
+        groups={groups}
+        defaultGroupId={inviteDefaultGroupId}
+      />
     </div>
   );
 }

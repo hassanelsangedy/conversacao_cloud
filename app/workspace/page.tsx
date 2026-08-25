@@ -11,18 +11,8 @@ export default function WorkspacePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    async function loadUser() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (user) {
-        setUserEmail(user.email || null);
-      }
-      setLoading(false);
-    }
-    loadUser();
-  }, [supabase]);
+    window.location.replace('/workspace/captura');
+  }, []);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();

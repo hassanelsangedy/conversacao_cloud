@@ -25,14 +25,23 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
   const router = useRouter();
   const supabase = createClient();
 
+  const [userEmail, setUserEmail] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      if (data?.user?.email) {
+        setUserEmail(data.user.email);
+      }
+    });
+  }, [supabase]);
+
   const handleSignOut = async () => {
     try {
       await supabase.auth.signOut();
     } catch {
       // Ignore
     }
-    router.push("/login");
-    router.refresh();
+    window.location.replace("/login");
   };
 
   const navLinks = [
@@ -119,16 +128,23 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
           })}
         </nav>
 
-        {/* User / Sign Out Action */}
+        {/* User Account Widget & Sair da Conta */}
         <div className="flex items-center gap-2">
+          {userEmail && (
+            <div className="hidden md:flex items-center gap-1.5 px-2.5 py-1 bg-slate-50 border border-slate-200/80 rounded-xl text-[11px] text-slate-600">
+              <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+              <span className="max-w-[140px] truncate font-medium">{userEmail}</span>
+            </div>
+          )}
+
           <button
             type="button"
             onClick={handleSignOut}
-            title="Encerrar sessão"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-500 hover:text-rose-600 hover:bg-rose-50 rounded-lg border border-transparent hover:border-rose-200 transition-colors cursor-pointer"
+            title="Encerrar sessão e sair da conta"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs text-slate-600 hover:text-rose-600 hover:bg-rose-50 rounded-xl border border-slate-200/80 hover:border-rose-200 transition-colors cursor-pointer"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Sair</span>
+            <LogOut className="w-3.5 h-3.5 text-slate-400 hover:text-rose-600" />
+            <span className="hidden sm:inline font-semibold">Sair da Conta</span>
           </button>
         </div>
       </div>

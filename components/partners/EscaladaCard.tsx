@@ -97,21 +97,23 @@ export function EscaladaCard({ className }: EscaladaCardProps) {
             Iniciativa pioneira do Departamento de Educação Física (DEF/CCS) e do Complexo de Esportes e Eventos (COESPE/UFRN) que disponibiliza à comunidade um espaço público de prática indoor de bouldering, integrando formação esportiva, convivência e inclusão.
           </p>
 
-          {/* Seção: Equipe do Projeto (Idealização, Coordenação e Colaboração) */}
-          <div className="space-y-3 pt-2">
-            <div className="flex flex-wrap items-center gap-6">
-              {/* Idealização & Coordenação */}
-              <div className="space-y-1.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  Idealização & Coordenação:
-                </div>
-                <div className="flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
-                  <div className="w-7 h-7 rounded-full overflow-hidden border border-amber-300 relative bg-amber-100 flex items-center justify-center shrink-0">
+          {/* Seção: Equipe do Projeto */}
+          <div className="space-y-4 pt-2">
+            {/* 1. Coordenação do Projeto */}
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Coordenação do Projeto:
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5">
+                {/* Hassan Mohamed Elsangedy */}
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
+                  <div className="w-6 h-6 rounded-full overflow-hidden border border-amber-300 relative bg-amber-100 flex items-center justify-center shrink-0">
                     <Image
                       src="/images/hassan-avatar.png"
                       alt="Hassan Mohamed Elsangedy"
-                      width={28}
-                      height={28}
+                      width={24}
+                      height={24}
                       className="object-cover w-full h-full"
                     />
                   </div>
@@ -119,27 +121,58 @@ export function EscaladaCard({ className }: EscaladaCardProps) {
                     Hassan Mohamed Elsangedy
                   </span>
                 </div>
+
+                {/* Debora Hashiguchi */}
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
+                  <div className="w-6 h-6 rounded-full bg-[#4A2612] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                    D
+                  </div>
+                  <span className="text-xs font-bold text-slate-800">
+                    Debora Hashiguchi
+                  </span>
+                </div>
+
+                {/* Leo Gouvea Medeiros */}
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white border border-slate-200 shadow-2xs">
+                  <div className="w-6 h-6 rounded-full bg-[#4A2612] text-white flex items-center justify-center text-[10px] font-bold shrink-0">
+                    L
+                  </div>
+                  <span className="text-xs font-bold text-slate-800">
+                    Leo Gouvea Medeiros
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. Colaboradores */}
+            <div className="space-y-2">
+              <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                Colaboradores:
               </div>
 
-              {/* Colaborador */}
-              <div className="space-y-1.5">
-                <div className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                  Colaborador:
-                </div>
-                <a
-                  href="https://webpsicofisio.vercel.app/#equipe/cheng-chao"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2.5 px-3 py-1.5 rounded-full bg-white border border-amber-200/90 hover:border-amber-400 hover:bg-amber-50/50 shadow-2xs transition-all cursor-pointer group"
-                >
-                  <div className="w-7 h-7 rounded-full bg-[#4A2612] text-white flex items-center justify-center text-xs font-bold shrink-0">
-                    C
+              <div className="flex flex-wrap items-center gap-2">
+                {[
+                  { name: "Vinicio de Souza e Almeida", initial: "V" },
+                  { name: "Izaú Rodrigues Freire", initial: "I" },
+                  { name: "Patrick Ramon Stafin Coquerel", initial: "P" },
+                  { name: "Filipe Macedo Tomazini", initial: "F" },
+                  { name: "Victor Augusto Gomes de Oliveira", initial: "V" },
+                  { name: "Priscilla Pinto Costa da Silva", initial: "P" },
+                  { name: "Gilberto de Paiva Rodrigues", initial: "G" },
+                  { name: "Vinícius Soares Emídio", initial: "V" },
+                ].map((colab, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-2 px-2.5 py-1 rounded-full bg-white border border-slate-200/90 shadow-2xs"
+                  >
+                    <div className="w-5 h-5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 flex items-center justify-center text-[9px] font-bold shrink-0">
+                      {colab.initial}
+                    </div>
+                    <span className="text-[11px] font-semibold text-slate-800">
+                      {colab.name}
+                    </span>
                   </div>
-                  <span className="text-xs font-bold text-slate-800 group-hover:text-[#963E1B] transition-colors">
-                    Cheng Chao
-                  </span>
-                  <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#963E1B] transition-colors" />
-                </a>
+                ))}
               </div>
             </div>
           </div>

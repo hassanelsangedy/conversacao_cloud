@@ -11,14 +11,12 @@ import {
   FileText,
   Radio,
   LogOut,
-  ChevronRight,
-  Sparkles,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 interface WorkspaceHeaderProps {
-  currentTitle: string;
+  currentTitle?: string;
   badgeText?: string;
 }
 
@@ -68,7 +66,7 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
   return (
     <header className="w-full bg-white/80 backdrop-blur-xl border-b border-slate-200/80 sticky top-0 z-30 shadow-xs">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        {/* Brand & Breadcrumbs */}
+        {/* Brand */}
         <div className="flex items-center gap-3">
           <Link
             href="/workspace/captura"
@@ -95,17 +93,6 @@ export function WorkspaceHeader({ currentTitle, badgeText }: WorkspaceHeaderProp
               <p className="text-[10px] text-slate-500 font-medium">CEP &bull; Pure-Batch</p>
             </div>
           </Link>
-
-          <ChevronRight className="w-4 h-4 text-slate-300 hidden md:block" />
-
-          <div className="hidden md:flex items-center gap-2">
-            <span className="text-xs font-semibold text-slate-700">{currentTitle}</span>
-            {badgeText && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-200 font-medium">
-                {badgeText}
-              </span>
-            )}
-          </div>
         </div>
 
         {/* Navigation Tabs */}

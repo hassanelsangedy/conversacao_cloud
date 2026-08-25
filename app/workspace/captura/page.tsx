@@ -436,6 +436,9 @@ export default function CapturaCentralPage() {
 
       const generatedSessionId = crypto.randomUUID();
 
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+
       const formData = new FormData();
       formData.append("file", audioBlob, "gravacao.webm");
       formData.append("sessionId", generatedSessionId);
@@ -447,6 +450,9 @@ export default function CapturaCentralPage() {
       formData.append("advisorNotes", advisorNotes);
       formData.append("nature", nature);
       formData.append("deviceId", selectedDeviceId || "Default");
+      if (currentUserId) {
+        formData.append("userId", currentUserId);
+      }
 
       console.log("[Captura] Despachando áudio para /api/process-session...");
 
@@ -508,6 +514,9 @@ export default function CapturaCentralPage() {
 
     setIsCreatingPatient(true);
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+
       const generatedId = `PAC-${Math.floor(1000 + Math.random() * 9000)}`;
       const { data, error } = await supabase
         .from("participants")
@@ -518,6 +527,7 @@ export default function CapturaCentralPage() {
           grammatical_gender: newPatientGender,
           tcle_accepted: newPatientTcle,
           group_id: activeGroupId,
+          created_by: currentUserId || null,
         })
         .select()
         .single();

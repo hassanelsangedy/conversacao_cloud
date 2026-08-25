@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
     let advisorNotes = "";
     let nature = "semi-estruturada";
     let deviceId = "Default";
+    let userId: string | null = null;
 
     // 1. Processa FormData ou JSON
     if (contentType.includes("multipart/form-data")) {
@@ -45,10 +46,12 @@ export async function POST(request: NextRequest) {
       nature = (formData.get("nature") as string) || nature;
       deviceId = (formData.get("deviceId") as string) || deviceId;
       sessionId = (formData.get("sessionId") as string) || null;
+      userId = (formData.get("userId") as string) || null;
     } else {
       const body = await request.json().catch(() => ({}));
       sessionId = body.sessionId || null;
       advisorNotes = body.advisorNotes || "";
+      userId = body.userId || null;
     }
 
     // 2. Inicializa cliente Supabase
@@ -107,6 +110,7 @@ export async function POST(request: NextRequest) {
       participant_id: validParticipantId,
       advisor_notes: advisorNotes || null,
       nature: nature,
+      created_by: userId,
     });
 
     if (dbErr) {

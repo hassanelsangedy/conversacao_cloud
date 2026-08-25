@@ -147,7 +147,10 @@ export default function ModeloEditorPage() {
     setFeedback(null);
 
     try {
-      const payload = {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+
+      const payload: any = {
         title: title.trim(),
         description: description.trim(),
         detail_level: detailLevel,
@@ -156,9 +159,13 @@ export default function ModeloEditorPage() {
       };
 
       if (isNew) {
-        await supabase.from("report_templates").insert([payload]);
+        payload.created_by = currentUserId || null;
+        payload.is_system = false;
+        const { error } = await supabase.from("report_templates").insert([payload]);
+        if (error) throw error;
       } else {
-        await supabase.from("report_templates").update(payload).eq("id", templateId);
+        const { error } = await supabase.from("report_templates").update(payload).eq("id", templateId);
+        if (error) throw error;
       }
 
       setIsSaving(false);

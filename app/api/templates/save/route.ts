@@ -52,6 +52,8 @@ export async function POST(request: NextRequest) {
       fields: sec.fields || [],
     }));
 
+    const userId = (template as any).userId || null;
+
     const { data, error } = await supabase
       .from("report_templates")
       .upsert({
@@ -61,6 +63,8 @@ export async function POST(request: NextRequest) {
         detail_level: finalDetail,
         tone_style: finalTone,
         sections: formattedSections,
+        created_by: userId,
+        is_system: false,
       })
       .select()
       .single();

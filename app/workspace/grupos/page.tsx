@@ -118,8 +118,21 @@ export default function GruposPage() {
 
       if (partErr) throw partErr;
 
+      // Busca Profissionais dos Grupos
+      const { data: profData } = await supabase
+        .from("group_professionals")
+        .select("*");
+
       const mappedGroups: ResearchGroupItem[] = (grpData || []).map((g: any) => {
         const groupParticipants = (partData || []).filter((p: any) => p.group_id === g.id);
+        const groupProf: ProfessionalMember[] = (profData || [])
+          .filter((p: any) => p.group_id === g.id)
+          .map((p: any) => ({
+            name: p.name || p.email,
+            email: p.email,
+            role: p.role || "colaborador",
+          }));
+
         return {
           id: g.id,
           name: g.name,
@@ -127,7 +140,7 @@ export default function GruposPage() {
           ethics_approval_date: g.ethics_approval_date || "2026-03-15",
           tcle_file_name: g.tcle_file_path ? "TCLE_Aprovado_CEP.pdf" : undefined,
           tcle_file_path: g.tcle_file_path,
-          professionals: DEFAULT_PROFESSIONALS,
+          professionals: groupProf.length > 0 ? groupProf : DEFAULT_PROFESSIONALS,
           participants: groupParticipants,
           created_at: g.created_at || new Date().toISOString(),
         };
@@ -197,6 +210,9 @@ export default function GruposPage() {
 
     setIsSubmitting(true);
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+
       let tclePath: string | null = null;
       if (tcleFile) {
         const fileExt = tcleFile.name.split(".").pop();
@@ -207,6 +223,8 @@ export default function GruposPage() {
 
         tclePath = uploadData?.path || `tcle-docs/${fileName}`;
       }
+
+      let targetGroupId = editingGroupId;
 
       if (editingGroupId) {
         // Atualizar
@@ -230,13 +248,14 @@ export default function GruposPage() {
         });
       } else {
         // Criar Novo
-        const newId = crypto.randomUUID();
+        targetGroupId = crypto.randomUUID();
         const { error } = await supabase.from("research_groups").insert({
-          id: newId,
+          id: targetGroupId,
           name: groupName,
           caae_number: caaeNumber,
           ethics_approval_date: approvalDate || null,
           tcle_file_path: tclePath,
+          created_by: currentUserId || null,
         });
 
         if (error) throw error;
@@ -245,6 +264,24 @@ export default function GruposPage() {
           type: "success",
           text: `Grupo "${groupName}" criado com sucesso!`,
         });
+      }
+
+      // Sincroniza os profissionais vinculados ao grupo
+      if (targetGroupId) {
+        await supabase.from("group_professionals").delete().eq("group_id", targetGroupId);
+
+        const validProfessionals = professionalsList
+          .filter((p) => p.email.trim().length > 0)
+          .map((p) => ({
+            group_id: targetGroupId,
+            name: p.name.trim() || p.email.trim(),
+            email: p.email.trim().toLowerCase(),
+            role: p.role,
+          }));
+
+        if (validProfessionals.length > 0) {
+          await supabase.from("group_professionals").insert(validProfessionals);
+        }
       }
 
       setIsGroupModalOpen(false);
@@ -302,6 +339,9 @@ export default function GruposPage() {
 
     setIsSubmitting(true);
     try {
+      const { data: authData } = await supabase.auth.getUser();
+      const currentUserId = authData?.user?.id;
+
       const generatedId = `PAC-${Math.floor(1000 + Math.random() * 9000)}`;
 
       const { data, error } = await supabase
@@ -316,6 +356,7 @@ export default function GruposPage() {
           group_id: targetGroupIdForParticipant,
           prontuario_pep: newPartPep || null,
           tcle_accepted: newPartTcle,
+          created_by: currentUserId || null,
         })
         .select()
         .single();
